@@ -9,7 +9,7 @@ pi-pocket --host 127.0.0.1 --port 8787 --base-path /julian.rath
 
 The flag overrides the environment. The default is the existing root installation. An empty value or `/` means root; other values must start with `/`, have no trailing slash, and contain only letters, digits, `.`, `_`, and `-` in nonempty segments. Whole `.` and `..` segments are forbidden. `/team/julian.rath` is also valid. This is a startup option, not stored configuration.
 
-Give each instance its own port, Unix account, and data directory. Use disjoint public mounts, such as `/julian.rath/` and `/jakob.auer/`, not overlapping mounts. This guide describes the proxy contract, not host provisioning or authentication-provider integration.
+Give each instance its own port, Unix account, and data directory. Use disjoint public mounts, such as `/julian.rath/` and `/jakob.auer/`, not overlapping mounts. This guide describes the proxy contract, not host provisioning. For the combined owner/guest login setup and its fully trusted-group restriction, see [several hosted instances](hosted-instances.md) and [Tailscale authentication](tailscale-auth.md#single-origin-with-path-prefixes).
 
 ## Proxy contract
 

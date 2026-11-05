@@ -10,7 +10,7 @@ import QRCode from "qrcode";
 import { MAX_PEEKS } from "../app.ts";
 import {
     type Auth,
-    COOKIE,
+    authCookieName,
     clearAuthCookie,
     INVITE_MINUTES,
     type InviteGrant,
@@ -110,7 +110,7 @@ export function createApi(options: HttpOptions, auth: Auth) {
         if (
             user.role === "owner" ||
             user.tunnel !== undefined ||
-            !parseCookies(request.headers.cookie)[COOKIE]
+            !parseCookies(request.headers.cookie)[authCookieName(app.basePath)]
         ) {
             return;
         }

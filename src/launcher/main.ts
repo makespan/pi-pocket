@@ -395,11 +395,16 @@ async function showPanel(withQr: boolean): Promise<void> {
     const lines = ["", `  ${accent("π")} ${bold("Pi Pocket")}  ${green("● running")}`, ""];
 
     lines.push(row("Access", `${modeLabel()}${modeNote() ? dim(` · ${modeNote()}`) : ""}`));
-    lines.push(row("Open", cyan(appUrl())));
 
-    if (state.mode === "lan") {
-        for (const address of lanAddresses().slice(1)) {
-            lines.push(row("", cyan(`http://${address}:${options.port}`)));
+    if (process.env.PI_POCKET_AUTH_CONFIG !== undefined) {
+        lines.push(row("Open", dim("use your authenticated gateway")));
+    } else {
+        lines.push(row("Open", cyan(`${appUrl()}${options.basePath}/`)));
+
+        if (state.mode === "lan") {
+            for (const address of lanAddresses().slice(1)) {
+                lines.push(row("", cyan(`http://${address}:${options.port}${options.basePath}/`)));
+            }
         }
     }
 

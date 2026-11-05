@@ -17,6 +17,12 @@ Runs on your own machine or directly on your phone. No cloud VM.
 
 </div>
 
+## Makespan fork
+
+This fork adds [path-prefix hosting](docs/base-path.md) and [external Tailscale authentication](docs/tailscale-auth.md), with native owner/guest roles and no QR pairing. See [hosting several instances](docs/hosted-instances.md) for the combined setup and its required gateway protections. Shared-origin paths are for fully trusted collaborators, not hostile tenant isolation.
+
+Install and pin a reviewed commit from `makespan/pi-pocket` for these features; the upstream npm package below does not include them. Keep fork changes separate so they can be contributed upstream or replaced by upstream implementations ([#275](https://github.com/TannerMidd/pi-pocket/issues/275), [#276](https://github.com/TannerMidd/pi-pocket/issues/276)).
+
 ## Highlights
 
 - **Durable.** Every model call, tool call, and subagent is stored as it happens. Restart the server mid-run, and the work continues.

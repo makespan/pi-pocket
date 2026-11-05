@@ -98,7 +98,11 @@ export class ExternalAuth {
     }
 
     /** Called before *any* dispatcher branch, even app files, capabilities, hooks and sign-in pages. */
-    async admit(request: IncomingMessage, config: ConfigStore): Promise<void> {
+    async admit(
+        request: IncomingMessage,
+        config: ConfigStore,
+        opaqueCapability = false,
+    ): Promise<void> {
         this.#people.delete(request);
         let principal: AuthPrincipal | undefined;
 
@@ -123,11 +127,14 @@ export class ExternalAuth {
         // X-Pocket alone is not an Origin check when an upstream authenticates every browser request.
         const origin = request.headers.origin;
         const mutation = !["GET", "HEAD", "OPTIONS"].includes(request.method ?? "GET");
+        // The router grants this exception only to verified signed assets and capability-only
+        // public routes. Their sandbox has an opaque origin; this never grants access to an API.
+        const opaque = opaqueCapability && (origin === undefined || origin === "null");
 
         if (
-            (origin !== undefined && origin !== this.#policy.origin) ||
-            request.headers["sec-fetch-site"] === "cross-site" ||
-            (mutation && origin !== this.#policy.origin)
+            (origin !== undefined && origin !== this.#policy.origin && !opaque) ||
+            (request.headers["sec-fetch-site"] === "cross-site" && !opaque) ||
+            (mutation && origin !== this.#policy.origin && !opaque)
         ) {
             throw new HttpError(403, "Use Pi Pocket's configured origin");
         }

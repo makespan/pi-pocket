@@ -10,7 +10,7 @@ import { Auth } from "./auth.ts";
 import { describe, HttpError } from "./errors.ts";
 import { createApi } from "./http/api.ts";
 import { artifact } from "./http/artifacts.ts";
-import { publicArtifactBundle } from "./http/artifact-assets.ts";
+import { assetUser, publicArtifactBundle } from "./http/artifact-assets.ts";
 import { extensionFile } from "./http/extension-routes.ts";
 import { hookRoute } from "./http/hook-routes.ts";
 import { linkRoute } from "./http/link-routes.ts";
@@ -28,7 +28,6 @@ export function createHandler(options: HttpOptions) {
 
     return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
         try {
-            await externalAuth?.admit(request, app.config);
             const target = request.url ?? "/";
             const stripped = requestPath(target, app.basePath);
 
@@ -48,7 +47,27 @@ export function createHandler(options: HttpOptions) {
             }
 
             const parts = path.split("/").filter((part) => part !== "");
+            const read = request.method === "GET" || request.method === "HEAD";
+            const signedAsset =
+                read &&
+                parts[0] === "a" &&
+                parts.length >= 5 &&
+                assetUser(app, parts[1]!, parts[2]!, parts[3]!) !== undefined;
+            const publicAsset = read && parts[0] === "pub" && parts.length >= 3;
+            const publicForm =
+                request.method === "POST" &&
+                parts[0] === "l" &&
+                parts.length === 2 &&
+                String(request.headers["content-type"] ?? "")
+                    .split(";")[0]!
+                    .trim()
+                    .toLowerCase() === "application/x-www-form-urlencoded";
 
+            await externalAuth?.admit(
+                request,
+                app.config,
+                signedAsset || publicAsset || publicForm,
+            );
             response.setHeader("x-content-type-options", "nosniff");
 
             if (auth.external && (parts[0] === "login" || parts[0] === "join")) {
