@@ -42,10 +42,24 @@ export function createHandler(options: HttpOptions) {
     return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
         try {
             const target = request.url ?? "/";
-            const stripped = requestPath(target, app.basePath);
+            const rawPath = target.split("?", 1)[0]!;
+            const approvalPrefix = app.url("/api/approvals/");
+            // Codemode approval IDs contain slashes. Only this fixed non-filesystem POST route
+            // may encode them inside its final ID; they cannot change the selected dispatcher.
+            const opaqueApproval =
+                request.method === "POST" &&
+                rawPath.startsWith(approvalPrefix) &&
+                !rawPath.slice(approvalPrefix.length).includes("/");
+            const stripped = requestPath(target, app.basePath, opaqueApproval);
 
             if (stripped === undefined) {
-                throw new HttpError(404, "Not found");
+                // Preserve the extension API's malformed-path response without dispatching it.
+                const extensionPath = rawPath.startsWith(app.url("/api/x/"));
+
+                throw new HttpError(
+                    extensionPath ? 400 : 404,
+                    extensionPath ? "Bad path" : "Not found",
+                );
             }
 
             const url = new URL(target, "http://pocket.local");

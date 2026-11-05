@@ -13,7 +13,7 @@ Give each instance its own port, Unix account, and data directory. Use disjoint 
 
 ## Proxy contract
 
-**Preserve the prefix.** Pocket receives `/julian.rath/api/me`, not `/api/me`. It validates the raw path, strips exactly one literal `/julian.rath`, and dispatches the remainder. Requests outside that mount, repeated slashes, dot/traversal segments, encoded slashes or backslashes, and ambiguous double-encoded traversal/separators are refused. Query values (such as filesystem paths) are not path prefixes and are not rewritten.
+**Preserve the prefix.** Pocket receives `/julian.rath/api/me`, not `/api/me`. It validates the raw path, strips exactly one literal `/julian.rath`, and dispatches the remainder. Requests outside that mount, repeated slashes, dot/traversal segments, encoded slashes or backslashes, and ambiguous double-encoded traversal/separators are refused. Query values (such as filesystem paths) are not path prefixes and are not rewritten. The one route-specific exception is an encoded slash inside the opaque final ID of `POST /api/approvals/<id>`: codemode call IDs contain slashes, and this cannot change the fixed approval route or select a filesystem path. Dot segments, backslashes and double encoding remain forbidden there. Malformed extension API paths retain their `400` response without being dispatched.
 
 An illustrative nginx location is:
 

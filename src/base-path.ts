@@ -25,8 +25,15 @@ export function appPath(basePath: string, path: string): string {
     return basePath + path;
 }
 
-/** Strip one literal prefix, rejecting path spellings a proxy or URL parser might interpret differently. */
-export function requestPath(target: string, basePath: string): string | undefined {
+/**
+ * Strip one literal prefix, rejecting ambiguous path spellings. A router may opt into encoded
+ * slashes in an opaque final ID only after selecting a fixed literal route (never a file path).
+ */
+export function requestPath(
+    target: string,
+    basePath: string,
+    opaqueFinalId = false,
+): string | undefined {
     const path = target.split("?", 1)[0]!;
 
     if (!path.startsWith("/") || /[\\#\u0000-\u0020\u007f]/.test(path)) {
@@ -34,13 +41,19 @@ export function requestPath(target: string, basePath: string): string | undefine
     }
 
     try {
-        for (const segment of path.split("/")) {
+        const segments = path.split("/");
+
+        for (const [index, segment] of segments.entries()) {
             const decoded = decodeURIComponent(segment);
+            const opaque = opaqueFinalId && index === segments.length - 1;
+            const components = opaque ? decoded.split("/") : [decoded];
 
             if (
-                decoded === "." ||
-                decoded === ".." ||
-                /[\\/\u0000-\u001f\u007f]/.test(decoded) ||
+                components.some(
+                    (part) => part === "." || part === ".." || (opaque && part === ""),
+                ) ||
+                /[\\\u0000-\u001f\u007f]/.test(decoded) ||
+                (!opaque && decoded.includes("/")) ||
                 /%(?:25|2e|2f|5c)/i.test(decoded)
             ) {
                 return undefined;
