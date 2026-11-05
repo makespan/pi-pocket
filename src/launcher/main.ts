@@ -491,6 +491,7 @@ function startServer(first: boolean): void {
         // PI_POCKET_ROLLBACK: this launcher goes back to the version before an update that does not start.
         env: {
             ...process.env,
+            PI_POCKET_BASE_PATH: options.basePath,
             PI_POCKET_SUPERVISED: "1",
             PI_POCKET_LAUNCHER: "1",
             PI_POCKET_ROLLBACK: "1",

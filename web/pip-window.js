@@ -1,3 +1,4 @@
+import { localStore as localStorage } from "./base-path.js";
 // PiP's remembered floating size. CSS alone clamps it when the viewport shrinks, without losing the preference.
 import { useEffect } from "preact/hooks";
 

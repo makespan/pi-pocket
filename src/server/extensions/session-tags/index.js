@@ -1,3 +1,4 @@
+import { sessionStore as sessionStorage } from "#pocket/base-path";
 // Session tags' browser module: each session's tags as chips on its row, as words for the session search and the
 // launcher, a filter beside the search, and sheets to edit tags (Edit tags on a held row, or for selected sessions).
 // It uses only `pocket`. Tags are shared; the filter is this tab's own.

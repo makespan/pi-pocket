@@ -1,6 +1,7 @@
+import { appUrl } from "#pocket/base-path";
 // The canvas: a design's page in the artifact sandbox frame (the same frame and bridge as the artifact viewer), scaled to
 // fit, with the page's side of Design mode (inspect, edit text, tweaks, pins, slides) spoken through the bridge.
-import { useArtifactBridge } from "/artifact-bridge.js";
+import { useArtifactBridge } from "#pocket/artifact-bridge";
 import { nextZoom, percent, scaleOf, stepZoom, zoomOf, zoomWord } from "./devices.js";
 import { checkOptions, pinsOfReport } from "./check.js";
 import { pinsOf } from "./comments.js";
@@ -14,7 +15,7 @@ export const SANDBOX =
 export const ALLOW = "fullscreen; clipboard-write; accelerometer; gyroscope";
 
 export const frameUrl = (conversation, id, version) =>
-    `/a/${conversation}/${encodeURIComponent(id)}/${version}`;
+    appUrl(`/a/${conversation}/${encodeURIComponent(id)}/${version}`);
 
 const MIN_CROP = 160;
 const CROP_PAD = 24;

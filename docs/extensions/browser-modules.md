@@ -226,3 +226,7 @@ The page allows nothing from another site. The app's content security policy all
 - [How tool calls show](tool-calls.md): `pocket.toolCall`.
 - [Events](events.md): live updates from the server.
 - [examples/server-status.js](../examples/server-status.js): a page on the rail, with a route and events.
+
+## Base paths and browser state
+
+Use `pocket.api` and `pocket.asset` for module-owned routes and files. For core app paths and persistent browser choices, import `appUrl`, `localStore`, or `sessionStore` from `"#pocket/base-path"`; do not hard-code root URLs or use unscoped storage keys. The [base-path guide](../base-path.md#url-helpers-for-extension-authors) defines the helper contract and its same-origin isolation limitation.

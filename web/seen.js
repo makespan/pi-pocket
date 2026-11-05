@@ -1,3 +1,4 @@
+import { storageEventKey, localStore as localStorage } from "./base-path.js";
 // What this browser has seen: when it last looked at each session, by the server's clock, so a run that ended since
 // is new. Peek tiles show those sessions, and the session list's squares turn solid for them. Opening a session is
 // looking at it, and so is having it open in sight when its run ends.
@@ -49,7 +50,13 @@ store.set({ peekSeen: readSeen() });
 
 // Another tab of this browser marked a session seen (or cleared the storage).
 addEventListener("storage", (event) => {
-    if (event.key === null || event.key.startsWith(SEEN_PREFIX)) {
+    const key = storageEventKey(event.key);
+
+    if (key === undefined) {
+        return;
+    }
+
+    if (key === null || key.startsWith(SEEN_PREFIX)) {
         store.set({ peekSeen: readSeen() });
     }
 });

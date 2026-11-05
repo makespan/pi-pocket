@@ -12,6 +12,11 @@
         "durable"
     ],
     "type": "module",
+    "imports": {
+        "#pocket/base-path": "./web/base-path.js",
+        "#pocket/store": "./web/store.js",
+        "#pocket/artifact-bridge": "./web/artifact-bridge.js"
+    },
     "license": "MIT",
     "author": "Tanner Middleton",
     "repository": {

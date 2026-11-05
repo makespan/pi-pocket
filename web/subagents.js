@@ -1,3 +1,4 @@
+import { localStore as localStorage } from "./base-path.js";
 // The subagents bar, above the message box: this session's subagents at a glance. It shows while one works or has a
 // report on its way to Pi, and after they finish until it is put away. Folded, one line: how many work and how many
 // are done, and what the newest one does. Unfolded, a row each: what it was asked, what it does this moment (its peek,

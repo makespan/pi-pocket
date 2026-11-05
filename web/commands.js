@@ -1,3 +1,4 @@
+import { appUrl } from "./base-path.js";
 // Slash commands in the message box ("/compact", "/model sonnet", …). They run here in the app and are never sent to Pi.
 import { browserAvailable, openInBrowser, toggleBrowser } from "./browser.js";
 import { filesAvailable, toggleFiles } from "./files-panel.js";
@@ -364,7 +365,7 @@ const COMMANDS = [
     {
         name: "export",
         description: "Download this conversation as Markdown",
-        run: () => location.assign(`/api/c/${store.state.view.conversation.id}/export`),
+        run: () => location.assign(appUrl(`/api/c/${store.state.view.conversation.id}/export`)),
     },
     {
         name: "resume",

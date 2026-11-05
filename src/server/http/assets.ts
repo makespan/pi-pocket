@@ -1,4 +1,5 @@
 /** The web app's own files and the modules it imports, its content security policy, and image files it shows. */
+import { appPath } from "../../base-path.ts";
 import { createHash } from "node:crypto";
 import { closeSync, createReadStream, openSync, readFileSync, readSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -239,7 +240,7 @@ function preloads(imports: Record<string, string>): string[] {
 }
 
 /** The app page, with its content security policy, and the modules it loads listed for the browser to fetch at once. */
-export function serveApp(response: ServerResponse): void {
+export function serveApp(response: ServerResponse, basePath = ""): void {
     let body: string;
 
     try {
@@ -250,7 +251,10 @@ export function serveApp(response: ServerResponse): void {
         return;
     }
 
-    // The policy is of the page as it is stored: links are not scripts, and add nothing to it.
+    body = body
+        .replaceAll("__POCKET_BASE_JSON__", JSON.stringify(basePath))
+        .replaceAll("__POCKET_BASE__", basePath);
+
     const policy = appPolicy(body);
 
     try {
@@ -259,8 +263,15 @@ export function serveApp(response: ServerResponse): void {
             string,
             string
         >;
-        const links = preloads(imports)
-            .map((address) => `<link rel="modulepreload" href="${address}" />`)
+        const links = preloads(
+            Object.fromEntries(
+                Object.entries(imports).map(([name, address]) => [
+                    name,
+                    address.slice(basePath.length),
+                ]),
+            ),
+        )
+            .map((address) => `<link rel="modulepreload" href="${basePath}${address}" />`)
             .join("");
 
         body = body.replace("</head>", () => `${links}</head>`);
@@ -272,6 +283,22 @@ export function serveApp(response: ServerResponse): void {
         "cache-control": "no-cache",
         "content-security-policy": policy,
     });
+}
+
+/** The PWA's public identity, scope, share target and icons, explicitly generated for this mount. */
+export function serveManifest(response: ServerResponse, basePath: string): void {
+    const manifest = JSON.parse(readFileSync(join(WEB, "manifest.webmanifest"), "utf8"));
+
+    manifest.id = appPath(basePath, "/");
+    manifest.start_url = appPath(basePath, "/");
+    manifest.scope = appPath(basePath, "/");
+    manifest.share_target.action = appPath(basePath, "/share");
+
+    for (const icon of manifest.icons) {
+        icon.src = appPath(basePath, icon.src);
+    }
+
+    send(response, 200, JSON.stringify(manifest), "application/manifest+json");
 }
 
 /**

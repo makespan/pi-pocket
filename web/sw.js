@@ -1,3 +1,9 @@
+// This is a classic worker: its registration scope is the server-provided mount, including its final slash.
+const basePath = new URL(self.registration.scope).pathname.slice(0, -1);
+const appUrl = (path) => basePath + path;
+const inScope = (url) =>
+    url.origin === self.location.origin && url.pathname.startsWith(basePath + "/");
+
 // Pi Pocket's service worker. It shows push notifications (Pi finished, an approval, a chat message), answers an
 // approval from its notification, opens the right session when one is tapped, and hands things shared to Pi Pocket
 // from other apps to the page. It caches none of the app: the app is edited live.
@@ -5,7 +11,7 @@ self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
 
 /** Where shared things wait until the page picks them up; see `web/share.js`. */
-const SHARE_CACHE = "pocket-share";
+const SHARE_CACHE = (basePath ? `pocket@${basePath}:` : "") + "pocket-share";
 
 self.addEventListener("push", (event) => {
     let data = {};
@@ -31,9 +37,9 @@ self.addEventListener("push", (event) => {
                 body: data.body || "",
                 tag: data.tag,
                 renotify: Boolean(data.tag),
-                icon: "/icon.svg",
+                icon: appUrl("/icon.svg"),
                 actions,
-                data: { url: data.url || "/", approval },
+                data: { url: data.url || appUrl("/"), approval },
             }),
             // A dot on the home-screen icon; the app sets the real count once it opens.
             self.navigator.setAppBadge?.().catch(() => {}),
@@ -46,7 +52,7 @@ async function answerApproval(approval, allow, data) {
     let problem;
 
     try {
-        const response = await fetch(`/api/approvals/${encodeURIComponent(approval.id)}`, {
+        const response = await fetch(appUrl(`/api/approvals/${encodeURIComponent(approval.id)}`), {
             method: "POST",
             credentials: "same-origin",
             headers: { "X-Pocket": "1", "content-type": "application/json" },
@@ -68,14 +74,20 @@ async function answerApproval(approval, allow, data) {
 
     await self.registration.showNotification(`Could not ${allow ? "allow" : "deny"} the call`, {
         body: problem,
-        icon: "/icon.svg",
+        icon: appUrl("/icon.svg"),
         data: { url: data.url },
     });
 }
 
 async function openUrl(url) {
     const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-    const open = windows.find((client) => new URL(client.url).origin === self.location.origin);
+    const target = new URL(url, self.location.origin);
+
+    if (!inScope(target)) {
+        return;
+    }
+
+    const open = windows.find((client) => inScope(new URL(client.url)));
 
     // PiP's notifications open its panel over whatever the window shows, rather than take the window elsewhere.
     if (open && new URL(url).searchParams.has("pip")) {
@@ -110,7 +122,7 @@ self.addEventListener("notificationclick", (event) => {
         return;
     }
 
-    event.waitUntil(openUrl(new URL(data.url || "/", self.location.origin).href));
+    event.waitUntil(openUrl(new URL(data.url || appUrl("/"), self.location.origin).href));
 });
 
 /**
@@ -124,7 +136,7 @@ async function receiveShare(request) {
     try {
         form = await request.formData();
     } catch {
-        return Response.redirect("/?share=failed", 303);
+        return Response.redirect(new URL(appUrl("/?share=failed"), self.location.origin).href, 303);
     }
 
     const id = crypto.randomUUID();
@@ -139,13 +151,13 @@ async function receiveShare(request) {
     };
 
     await cache.put(
-        `/share/${id}/meta`,
+        appUrl(`/share/${id}/meta`),
         new Response(JSON.stringify(meta), { headers: { "content-type": "application/json" } }),
     );
     await Promise.all(
         files.map((file, index) =>
             cache.put(
-                `/share/${id}/file/${index}`,
+                appUrl(`/share/${id}/file/${index}`),
                 new Response(file, {
                     headers: { "content-type": file.type || "application/octet-stream" },
                 }),
@@ -153,7 +165,7 @@ async function receiveShare(request) {
         ),
     );
 
-    return Response.redirect(`/?share=${id}`, 303);
+    return Response.redirect(new URL(appUrl(`/?share=${id}`), self.location.origin).href, 303);
 }
 
 self.addEventListener("fetch", (event) => {
@@ -162,7 +174,7 @@ self.addEventListener("fetch", (event) => {
     if (
         event.request.method === "POST" &&
         url.origin === self.location.origin &&
-        url.pathname === "/share"
+        url.pathname === appUrl("/share")
     ) {
         event.respondWith(receiveShare(event.request));
     }

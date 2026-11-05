@@ -1,3 +1,10 @@
+import {
+    storageEventKey,
+    appUrl,
+    appRoute,
+    localStore as localStorage,
+    sessionStore as sessionStorage,
+} from "./base-path.js";
 // App state, the server connection, and API calls. Components read `store.state` and re-render on `store.subscribe`.
 import { onRoute, pushRoute } from "./back.js";
 import { sessionForest, unfolded } from "./session-tree.js";
@@ -257,7 +264,7 @@ function opened(id) {
 opened(store.state.conversationId);
 
 function routeConversation() {
-    const match = /^\/s\/(\d+)/.exec(location.pathname);
+    const match = /^\/s\/(\d+)/.exec(appRoute(location.pathname) ?? "");
 
     return match ? Number(match[1]) : null;
 }
@@ -283,7 +290,13 @@ function peopleFor(id, reads = store.state.chatReads) {
 
 // Another tab of this browser read a chat (or the storage was cleared): the list's marks follow.
 addEventListener("storage", (event) => {
-    if (event.key === null || event.key.startsWith(CHAT_READ_PREFIX)) {
+    const key = storageEventKey(event.key);
+
+    if (key === undefined) {
+        return;
+    }
+
+    if (key === null || key.startsWith(CHAT_READ_PREFIX)) {
         setChanged({ chatReads: kept(store.state.chatReads, readChatReads()) });
     }
 });
@@ -410,7 +423,13 @@ export function toggleFoldedLinked(id) {
 
 // Another tab of this browser folded or unfolded: this one follows.
 addEventListener("storage", (event) => {
-    if (event.key === FOLDED_LINKED_KEY) {
+    const key = storageEventKey(event.key);
+
+    if (key === undefined) {
+        return;
+    }
+
+    if (key === FOLDED_LINKED_KEY) {
         store.set({ foldedLinked: readFoldedLinked() });
     }
 });
@@ -581,7 +600,7 @@ export async function api(path, body, options = {}) {
         }
     }
 
-    const response = await fetch(`/api/${path}`, init);
+    const response = await fetch(appUrl(`/api/${path}`), init);
     const text = await response.text();
     let data;
 
@@ -662,7 +681,7 @@ export async function attempt(action) {
 export function signOut() {
     return attempt(async () => {
         await api("logout", {});
-        location.href = "/";
+        location.href = appUrl("/");
     });
 }
 
@@ -1036,7 +1055,7 @@ addEventListener("pageshow", (event) => {
 /** Server-sent events: one long response the server writes to as things change. */
 function streamEvents(query) {
     helloAsked = moment();
-    const events = new EventSource(`/api/events?${query}`);
+    const events = new EventSource(appUrl(`/api/events?${query}`));
     /** The first batch arrived whole: the session's view, or the session list when no session is open. */
     let settled = false;
     const settles = query.includes("&c=") ? ["view", "missing"] : ["sessions"];
@@ -1130,7 +1149,9 @@ function pollEvents(query) {
             request?.abort();
 
             if (session) {
-                fetch(`/api/poll?session=${session}&close=1`, { keepalive: true }).catch(() => {});
+                fetch(appUrl(`/api/poll?session=${session}&close=1`), { keepalive: true }).catch(
+                    () => {},
+                );
             }
         },
     };
@@ -1144,7 +1165,7 @@ function pollEvents(query) {
 
             try {
                 const response = await fetch(
-                    `/api/poll?${query}${session ? `&session=${session}&ack=${ack}` : ""}`,
+                    appUrl(`/api/poll?${query}${session ? `&session=${session}&ack=${ack}` : ""}`),
                     { signal: request.signal, cache: "no-store" },
                 );
 
@@ -1276,7 +1297,7 @@ export function closeSignIn(flowId) {
 }
 
 export function navigate(conversationId, { replace = false, sheet = null } = {}) {
-    const path = conversationId === null ? "/" : `/s/${conversationId}`;
+    const path = conversationId === null ? appUrl("/") : appUrl(`/s/${conversationId}`);
 
     if (location.pathname !== path || store.state.conversationId !== conversationId) {
         pushRoute(path, { replace });

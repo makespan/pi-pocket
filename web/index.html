@@ -2,6 +2,9 @@
 <html lang="en">
     <head>
         <meta charset="utf-8" />
+        <script>
+            Object.defineProperty(globalThis, "POCKET_BASE_PATH", { value: __POCKET_BASE_JSON__ });
+        </script>
         <meta
             name="viewport"
             content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
@@ -11,10 +14,14 @@
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <title>Pi Pocket</title>
-        <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
-        <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-        <link rel="preload" href="/style.css" as="style" />
+        <link
+            rel="manifest"
+            href="__POCKET_BASE__/manifest.webmanifest"
+            crossorigin="use-credentials"
+        />
+        <link rel="icon" href="__POCKET_BASE__/icon.svg" type="image/svg+xml" />
+        <link rel="apple-touch-icon" href="__POCKET_BASE__/apple-touch-icon.png" />
+        <link rel="preload" href="__POCKET_BASE__/style.css" as="style" />
         <!--
             The cascade layers, in the order they win: the app's own CSS and extensions' (pocket), the colors chosen in
             Appearance (palette), then the theme (theme.js). Sizes people choose stay inline and win over all three, unless a
@@ -22,7 +29,7 @@
         -->
         <style>
             @layer pocket, palette, theme;
-            @import url("/style.css") layer(pocket);
+            @import url("__POCKET_BASE__/style.css") layer(pocket);
         </style>
         <!--
             The last look this browser used (theme.js keeps it), before the first paint: no flash of another theme. The
@@ -31,10 +38,18 @@
         -->
         <script>
             (function () {
-                var fonts = ["/fonts/Geist.woff2", "/fonts/JetBrainsMono.woff2"];
+                var fonts = [
+                    "__POCKET_BASE__/fonts/Geist.woff2",
+                    "__POCKET_BASE__/fonts/JetBrainsMono.woff2",
+                ];
                 var sheets = [];
                 try {
-                    var look = JSON.parse(localStorage.getItem("pocket.themeCache") || "null");
+                    var look = JSON.parse(
+                        localStorage.getItem(
+                            (POCKET_BASE_PATH ? "pocket@" + POCKET_BASE_PATH + ":" : "") +
+                                "pocket.themeCache",
+                        ) || "null",
+                    );
                     if (look) {
                         var root = document.documentElement;
                         var light =
@@ -50,17 +65,24 @@
                         var query = new URLSearchParams(location.search);
                         var safe = query.has("noext")
                             ? !/^(0|false|off|no)$/i.test(query.get("noext").trim())
-                            : sessionStorage.getItem("pocket.noext") === "1";
+                            : sessionStorage.getItem(
+                                  (POCKET_BASE_PATH ? "pocket@" + POCKET_BASE_PATH + ":" : "") +
+                                      "pocket.noext",
+                              ) === "1";
                         if (!safe) {
                             sheets = (look.css || []).filter(function (url) {
                                 return /^\/themes\/[a-z0-9][a-z0-9-]{1,47}\/[A-Za-z0-9_-]{12}\/theme\.css$/.test(
-                                    url,
+                                    url.startsWith(POCKET_BASE_PATH + "/")
+                                        ? url.slice(POCKET_BASE_PATH.length)
+                                        : "",
                                 );
                             });
                             var own = (look.fonts || []).filter(function (url) {
                                 // Its own fonts, or the app's that it names (/fonts/…).
                                 return /^(\/themes\/[a-z0-9][a-z0-9-]{1,47}\/[A-Za-z0-9_-]{12}\/([A-Za-z0-9_-][A-Za-z0-9._-]*\/)*[A-Za-z0-9_-][A-Za-z0-9._-]*|\/fonts\/[A-Za-z0-9_-]+)\.woff2$/.test(
-                                    url,
+                                    url.startsWith(POCKET_BASE_PATH + "/")
+                                        ? url.slice(POCKET_BASE_PATH.length)
+                                        : "",
                                 );
                             });
                             if (sheets.length > 0 && own.length > 0) fonts = own;
@@ -100,11 +122,14 @@
         <script type="importmap">
             {
                 "imports": {
-                    "preact": "/vendor/preact.mjs",
-                    "preact/hooks": "/vendor/preact-hooks.mjs",
-                    "htm": "/vendor/htm.mjs",
-                    "marked": "/vendor/marked.mjs",
-                    "dompurify": "/vendor/purify.mjs"
+                    "preact": "__POCKET_BASE__/vendor/preact.mjs",
+                    "preact/hooks": "__POCKET_BASE__/vendor/preact-hooks.mjs",
+                    "htm": "__POCKET_BASE__/vendor/htm.mjs",
+                    "marked": "__POCKET_BASE__/vendor/marked.mjs",
+                    "dompurify": "__POCKET_BASE__/vendor/purify.mjs",
+                    "#pocket/base-path": "__POCKET_BASE__/base-path.js",
+                    "#pocket/store": "__POCKET_BASE__/store.js",
+                    "#pocket/artifact-bridge": "__POCKET_BASE__/artifact-bridge.js"
                 }
             }
         </script>
@@ -118,6 +143,6 @@
                 <div class="boot-caption">starting</div>
             </div>
         </div>
-        <script type="module" src="/app.js"></script>
+        <script type="module" src="__POCKET_BASE__/app.js"></script>
     </body>
 </html>

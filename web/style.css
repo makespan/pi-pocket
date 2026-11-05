@@ -46,14 +46,14 @@
 
 @font-face {
     font-family: "Pocket Mono";
-    src: url("/fonts/JetBrainsMono.woff2") format("woff2");
+    src: url("./fonts/JetBrainsMono.woff2") format("woff2");
     font-weight: 100 800;
     font-display: swap;
 }
 
 @font-face {
     font-family: "Pocket Sans";
-    src: url("/fonts/Geist.woff2") format("woff2");
+    src: url("./fonts/Geist.woff2") format("woff2");
     font-weight: 100 900;
     font-display: swap;
 }
@@ -62,7 +62,7 @@
    Code has none: the browser slants its upright letters. */
 @font-face {
     font-family: "Pocket Mono";
-    src: url("/fonts/JetBrainsMono-Italic.woff2") format("woff2");
+    src: url("./fonts/JetBrainsMono-Italic.woff2") format("woff2");
     font-weight: 100 800;
     font-style: italic;
     font-display: swap;
@@ -74,28 +74,28 @@
 /* The Nerd Fonts icons alone (their Mono build: one cell wide), in the private use areas they fill. */
 @font-face {
     font-family: "Pocket Nerd Symbols";
-    src: url("/fonts/NerdFontsSymbolsMono.woff2") format("woff2");
+    src: url("./fonts/NerdFontsSymbolsMono.woff2") format("woff2");
     font-display: swap;
     unicode-range: U+E000-F8FF, U+F0000-F1AF0;
 }
 
 @font-face {
     font-family: "Pocket Fira Code";
-    src: url("/fonts/FiraCode-VF.woff2") format("woff2");
+    src: url("./fonts/FiraCode-VF.woff2") format("woff2");
     font-weight: 300 700;
     font-display: swap;
 }
 
 @font-face {
     font-family: "Pocket IBM Plex Mono";
-    src: url("/fonts/IBMPlexMono-Variable.woff2") format("woff2");
+    src: url("./fonts/IBMPlexMono-Variable.woff2") format("woff2");
     font-weight: 100 700;
     font-display: swap;
 }
 
 @font-face {
     font-family: "Pocket IBM Plex Mono";
-    src: url("/fonts/IBMPlexMono-Variable-Italic.woff2") format("woff2");
+    src: url("./fonts/IBMPlexMono-Variable-Italic.woff2") format("woff2");
     font-weight: 100 700;
     font-style: italic;
     font-display: swap;
@@ -106,28 +106,28 @@
    were three quarters of its size. */
 @font-face {
     font-family: "Pocket Iosevka";
-    src: url("/fonts/Iosevka-Regular.woff2") format("woff2");
+    src: url("./fonts/Iosevka-Regular.woff2") format("woff2");
     font-weight: 400;
     font-display: swap;
 }
 
 @font-face {
     font-family: "Pocket Iosevka";
-    src: url("/fonts/Iosevka-SemiBold.woff2") format("woff2");
+    src: url("./fonts/Iosevka-SemiBold.woff2") format("woff2");
     font-weight: 600;
     font-display: swap;
 }
 
 @font-face {
     font-family: "Pocket Iosevka";
-    src: url("/fonts/Iosevka-Bold.woff2") format("woff2");
+    src: url("./fonts/Iosevka-Bold.woff2") format("woff2");
     font-weight: 700;
     font-display: swap;
 }
 
 @font-face {
     font-family: "Pocket Iosevka";
-    src: url("/fonts/Iosevka-Italic.woff2") format("woff2");
+    src: url("./fonts/Iosevka-Italic.woff2") format("woff2");
     font-weight: 400;
     font-style: italic;
     font-display: swap;
@@ -135,7 +135,7 @@
 
 @font-face {
     font-family: "Pocket Iosevka";
-    src: url("/fonts/Iosevka-SemiBoldItalic.woff2") format("woff2");
+    src: url("./fonts/Iosevka-SemiBoldItalic.woff2") format("woff2");
     font-weight: 600;
     font-style: italic;
     font-display: swap;
@@ -143,7 +143,7 @@
 
 @font-face {
     font-family: "Pocket Iosevka";
-    src: url("/fonts/Iosevka-BoldItalic.woff2") format("woff2");
+    src: url("./fonts/Iosevka-BoldItalic.woff2") format("woff2");
     font-weight: 700;
     font-style: italic;
     font-display: swap;
@@ -151,14 +151,14 @@
 
 @font-face {
     font-family: "Pocket Inter";
-    src: url("/fonts/InterVariable.woff2") format("woff2");
+    src: url("./fonts/InterVariable.woff2") format("woff2");
     font-weight: 100 900;
     font-display: swap;
 }
 
 @font-face {
     font-family: "Pocket Inter";
-    src: url("/fonts/InterVariable-Italic.woff2") format("woff2");
+    src: url("./fonts/InterVariable-Italic.woff2") format("woff2");
     font-weight: 100 900;
     font-style: italic;
     font-display: swap;

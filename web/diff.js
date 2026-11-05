@@ -1,3 +1,4 @@
+import { appUrl, localStore as localStorage } from "./base-path.js";
 // The diff viewer: one file's diff (unified or side by side, with line numbers, syntax colors, the words that changed,
 // and hidden lines a tap away), and Review, which walks every uncommitted change of a session's folder file by file.
 // Parsing is web/diff-parse.js.
@@ -943,7 +944,7 @@ function fetchDiff(id, path) {
 
             try {
                 const response = await fetch(
-                    `/api/c/${id}/changes/diff?path=${encodeURIComponent(path)}`,
+                    appUrl(`/api/c/${id}/changes/diff?path=${encodeURIComponent(path)}`),
                 );
                 const text = await response.text();
 

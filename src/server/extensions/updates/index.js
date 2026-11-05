@@ -1,3 +1,4 @@
+import { localStore as localStorage } from "#pocket/base-path";
 // Updates' browser module, for the owner: a menu row and a launcher action that open the Update Pi Pocket sheet (the running
 // version and how it was installed, the newest release and its notes, what stands in the way, and Update and restart), a notice once for each
 // new version, and one for how an update ended, after its restart. It uses only `pocket`.

@@ -1,3 +1,4 @@
+import { appUrl, sessionStore as sessionStorage } from "./base-path.js";
 // Extensions' browser modules. An extension module can give the app one (`web.client` on the server): it loads here, in
 // the tabs of the people it is for, and its default export gets `pocket`, the app's API for extensions. With it, it adds
 // rail buttons, menu rows, launcher actions, pages in the conversation's place, sheets, panels beside the conversation,
@@ -810,7 +811,7 @@ function routeOf(module, path) {
         throw refuse("has a . or .. part: give the route's own path");
     }
 
-    const prefix = `/api/x/${module}/`;
+    const prefix = appUrl(`/api/x/${module}/`);
     const url = new URL(`${prefix}${relative}`, location.origin);
 
     if (url.origin !== location.origin || !url.pathname.startsWith(prefix)) {

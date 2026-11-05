@@ -244,6 +244,7 @@ export type RouteMatch =
     { route: Route; part: WebPart; params: Record<string, string> } | { allow: WebMethod[] };
 
 interface Options {
+    basePath?: string;
     /** Browser modules for the people `access` lets in changed: their tabs must hear which to load. */
     changed?: (access: WebAccess[]) => void;
     /** Send a browser module's event to the tabs it loads in (`to`: one person's). */
@@ -850,7 +851,7 @@ export class ExtensionWebs {
             .map((part) => ({
                 module: part.module,
                 title: part.title,
-                url: `/x/${part.module}/${part.client!.rev}/${part.client!.entry}`,
+                url: `${this.#options.basePath ?? ""}/x/${part.module}/${part.client!.rev}/${part.client!.entry}`,
             }));
     }
 

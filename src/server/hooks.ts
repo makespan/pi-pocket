@@ -373,8 +373,8 @@ export class Hooks {
         const { secret, ...rest } = hook;
 
         return hook.signed === true
-            ? { ...rest, path: `/hook/${hook.id}`, secret }
-            : { ...rest, path: `/hook/${hook.id}/${secret}` };
+            ? { ...rest, path: this.#app.url(`/hook/${hook.id}`), secret }
+            : { ...rest, path: this.#app.url(`/hook/${hook.id}/${secret}`) };
     }
 
     /** The hooks a person may see and remove: their own; the owner's sees every one. Newest first. */

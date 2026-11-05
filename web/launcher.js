@@ -1,3 +1,4 @@
+import { appUrl } from "./base-path.js";
 // The launcher, after Omarchy's Walker: one box for sessions, actions, and themes. Mod+K opens it anywhere. Arrowing
 // onto a theme shows it at once; Enter keeps it, Escape goes back. Start with > for actions only, @ for sessions, # for
 // themes.
@@ -388,7 +389,7 @@ function actionItems() {
             run: () => {
                 const link = document.createElement("a");
 
-                link.href = `/api/c/${conversation.id}/export`;
+                link.href = appUrl(`/api/c/${conversation.id}/export`);
                 link.download = "";
                 link.click();
             },

@@ -1,3 +1,4 @@
+import { appUrl } from "#pocket/base-path";
 // What the workspace asks of the server, and keeps in its store: the session's designs, a design's comments and this
 // person's tweaks, "go back to this one", and a file export.
 import { savePick } from "./state.js";
@@ -91,7 +92,9 @@ export function siblingsOf(designs, artifact) {
 export function downloadFile(conversation, made) {
     const link = document.createElement("a");
 
-    link.href = `/api/c/${encodeURIComponent(conversation)}/download?${new URLSearchParams({ path: made.relative })}`;
+    link.href = appUrl(
+        `/api/c/${encodeURIComponent(conversation)}/download?${new URLSearchParams({ path: made.relative })}`,
+    );
     link.download = made.name;
     document.body.append(link);
     link.click();

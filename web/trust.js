@@ -1,3 +1,4 @@
+import { sessionStore as sessionStorage } from "./base-path.js";
 // Project trust gates .agents/skills and model defaults from .pi/settings.json. The bar asks the owner when a
 // session's project has either and nobody decided yet; /trust shows and changes the decision shared with Pi's CLI.
 // Trusting model defaults affects only later new sessions, never the open session.

@@ -1,3 +1,4 @@
+import { localStore as localStorage } from "./base-path.js";
 // What this person sent from this browser in one session, oldest first: ↑ recalls it and Ctrl+R searches it.
 // Old unscoped strings in pocket.history stay untouched; their sessions cannot be known.
 

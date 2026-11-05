@@ -1,3 +1,4 @@
+import { appUrl } from "../base-path.js";
 // Memory: the lessons Pi keeps across sessions, for this session's project and for everywhere.
 import { useEffect, useState } from "preact/hooks";
 import { api, attempt, closeSheet, navigate, notify, store } from "../store.js";
@@ -156,7 +157,7 @@ function Source({ lesson }) {
         ${lesson.byPi && lesson.by !== me?.id && html`<span> for ${lesson.byName}</span>`}
         ${
             lesson.from &&
-            html` · <a href=${`/s/${lesson.from.id}`} onClick=${open}>${lesson.from.title}</a>`
+            html` · <a href=${appUrl(`/s/${lesson.from.id}`)} onClick=${open}>${lesson.from.title}</a>`
         }
         <span> · ${timeAgo(lesson.updatedAt ?? lesson.createdAt)}</span>
         ${(lesson.pending || lesson.proposal) && html`<span> · for ${reach(lesson)}</span>`}
