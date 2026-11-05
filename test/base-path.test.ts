@@ -10,6 +10,7 @@ import { after, before, test } from "node:test";
 import { appPath, loginNext, parseBasePath, requestPath } from "../src/base-path.ts";
 import { PocketApp } from "../src/server/app.ts";
 import { authCookieName } from "../src/server/auth.ts";
+import { importProblems } from "../src/server/gallery/share.ts";
 import { Browsers } from "../src/server/browser.ts";
 import { findBrowser } from "../src/server/browser/discovery.ts";
 import { createHandler } from "../src/server/http.ts";
@@ -162,6 +163,49 @@ test("base paths accept dotted usernames, normalize only root, and reject ambigu
     );
     assert.equal(loginNext("//evil.example/", ""), "/");
     assert.equal(loginNext("/julian.rath/?x=\r\n", "/julian.rath"), "/julian.rath/");
+});
+
+test("gallery sharing accepts the public base-path helper but not core-only import-map aliases", () => {
+    const check = (name: string) =>
+        importProblems(
+            "mount",
+            [{ name: "mount.js", text: `import { appUrl } from "${name}";` }],
+            new Set(),
+        );
+
+    assert.deepEqual(check("#pocket/base-path"), []);
+    assert.match(check("#pocket/store")[0]!, /which Pi Pocket does not have/);
+    assert.match(check("#pocket/artifact-bridge")[0]!, /which Pi Pocket does not have/);
+});
+
+test("quick tunnel pinning uses only this mount's cookie, not a sibling root cookie", async () => {
+    const app = apps[1]!;
+    const mounted = app.config.addUser("Mounted guest", "guest");
+    const tunnel = "mounted-guest.trycloudflare.com";
+    const response = await fetch(origin + app.url("/api/me"), {
+        headers: {
+            cookie: `${authCookieName(app.basePath)}=${mounted.token}; pocket_auth=foreign-root-cookie`,
+            "x-forwarded-host": tunnel,
+        },
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(app.config.userById(mounted.user.id)?.tunnel, tunnel);
+    const bearer = app.config.addUser("Bearer guest", "guest");
+
+    assert.equal(
+        (
+            await fetch(origin + app.url("/api/me"), {
+                headers: {
+                    authorization: `Bearer ${bearer.token}`,
+                    cookie: "pocket_auth=foreign-root-cookie",
+                    "x-forwarded-host": tunnel,
+                },
+            })
+        ).status,
+        200,
+    );
+    assert.equal(app.config.userById(bearer.user.id)?.tunnel, undefined);
 });
 
 test("launcher reads the environment, lets the flag override it, and fails before launch on invalid paths", () => {

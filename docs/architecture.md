@@ -143,6 +143,8 @@ Lessons Pi keeps across sessions are one document for the whole app, `MemoryDoc`
 
 ## Startup
 
+When `PI_POCKET_AUTH_CONFIG` is set, the server initializes its required external auth provider before binding a port or opening the app. The HTTP router checks it for every dispatched route and resolves a persistent provider/subject binding to a current native person; cookies and bearer tokens cannot replace it. Sandbox capability assets/forms retain narrowly scoped opaque-origin handling, not a general API origin exception. Pairing remains the default when no external provider is configured. See [external authentication](external-auth.md).
+
 `PocketApp.#open` runs in this order, and the order matters:
 
 1. Take the data folder's lock. Set up push, Pi's settings, and the HTTP settings for provider streams. The pid-only `harness.lock` keeps older readers compatible; its `.identity` sidecar binds the lock file to Linux process start time and boot ID, with age-based recovery for damaged files and Linux process-start checks when identity is unavailable.

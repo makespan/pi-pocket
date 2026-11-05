@@ -50,9 +50,13 @@ server {
 }
 ```
 
-Here `10.200.0.1:8787` stands for the instance backend address reachable from the namespace; configure that route/firewall explicitly. Serve targets namespace-local `http://127.0.0.1:8080`. This is a proxy contract, not a namespace/Unix-account provisioning script. Do **not** copy the listener onto ordinary shared-host localhost. A shared proxy serving several instances needs a different injected secret per instance and fixed administrator-owned routing to each backend. Prefix/cookie/PWA routing is independent of this provider.
+Here `10.200.0.1:8787` stands for the instance backend address reachable from the namespace; configure that route/firewall explicitly. Serve targets namespace-local `http://127.0.0.1:8080`. This is a proxy contract, not a namespace/Unix-account provisioning script. Do **not** copy the listener onto ordinary shared-host localhost. A shared proxy serving several instances needs a different injected secret per instance and fixed administrator-owned routing to each backend. Prefix/cookie/PWA routing is independent of this provider. Shared-prefix hosting is suitable only when every instance owner, guest and browser extension is mutually trusted across all instances: scripts on one path can act as a visitor on another. Otherwise require a distinct browser origin per instance; origin pinning does not isolate sibling paths.
 
 The backend may be reachable by local users: without the injected secret, forged Serve headers and Pocket tokens are denied. But if local users can reach the **gateway ingress**, they can ask it to attach the real secret to a forged login. The secret alone does not fix an unprotected gateway. Root, the instance owner, the gateway, tailscaled and owner-UID code are trusted. Do not share secrets between mutually untrusted instances.
+
+## Single origin with path prefixes
+
+The [combined hosting guide](hosted-instances.md) shows one protected Tailscale endpoint and fixed per-user nginx locations, each with its own gateway secret and an unchanged path prefix. This layout requires **every owner, guest and browser extension on every instance to be trusted by all the others**. A script on one instance can act with a visitor's privileges on another same-origin instance, including owner privileges. Per-instance secrets stop forged direct-backend requests; they do not isolate browser paths or make this a hostile multi-tenant deployment. Use distinct browser origins if that trust does not hold.
 
 ## Instance configuration
 
@@ -86,9 +90,9 @@ Start with the external configuration in the service environment:
 
 ```sh
 PI_POCKET_AUTH_CONFIG=/home/alice/.pi-pocket/external-auth.json \
-    node bin/pi-pocket.js --access local --port 8787 --data /home/alice/.pi-pocket
+    node bin/pi-pocket.js --host 10.200.0.1 --port 8787 --data /home/alice/.pi-pocket
 ```
 
-The `local` access choice does not secure gateway ingress; the protected topology above does. Open the **public gateway address**, not the backend. There is no bootstrap QR/invite: the exact owner identity gets native owner access immediately. Other identities are denied unless explicitly listed. **Every newly admitted guest can steer Pi, execute commands as Alice's Unix user, and initially see all sessions.** Only list people trusted with that access. Viewer/session/budget edits then persist across browsers and restarts. Native removal is permanent until explicit offline readmission; restarting does not recreate a deleted person.
+For the namespace example, `10.200.0.1` must be an actual configured backend-side interface reachable by the gateway; apply the host's firewall policy to it. Host loopback is not reachable through that namespace's backend route. If using a protected gateway on the same host instead, bind the backend to `127.0.0.1` and configure that target at the gateway. Neither bind choice secures gateway ingress; the protected topology above does. Open the **public gateway address**, not the backend. There is no bootstrap QR/invite: the exact owner identity gets native owner access immediately. Other identities are denied unless explicitly listed. **Every newly admitted guest can steer Pi, execute commands as Alice's Unix user, and initially see all sessions.** Only list people trusted with that access. Viewer/session/budget edits then persist across browsers and restarts. Native removal is permanent until explicit offline readmission; restarting does not recreate a deleted person.
 
 Keep `PI_POCKET_AUTH_CONFIG` required in the service unit/environment after updates and restarts. Before admitting users, test from another unprivileged Unix account: direct requests with forged Serve headers must fail; the gateway ingress must be unreachable; an authenticated unlisted tailnet user and a tagged device must fail. Verify owner and allowlisted guest roles, a persisted viewer downgrade and removal after restart. No live Tailscale credentials or deployment are required by the repository's automated tests; they drive real HTTP with fabricated authenticated/forged gateway assertions.

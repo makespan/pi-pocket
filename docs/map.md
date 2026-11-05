@@ -55,6 +55,8 @@ A module split into parts keeps its name for the part others import, with the re
 | `alerts.ts`, `push.ts` | Push notifications: who hears about what; Web Push without dependencies (RFC 8291, 8292); the same to embedders over their connections (`embedder-notify`) |
 | `spend.ts`             | Cost per conversation and person; limits, a team's (linked sessions') against the budget of the session that started it                                    |
 
+`auth-provider.ts` owns the required startup-only external identity boundary and persisted native-person binding policy. `auth-providers/tailscale.ts` verifies per-instance gateway assertions and full Tailscale logins; this is separate from optional extensions. See [external authentication](external-auth.md) and [hosted instances](hosted-instances.md).
+
 ### What people ask of Pi
 
 | File                        | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
