@@ -384,7 +384,10 @@ function sendAccess(): void {
 
 // ─── The panel ──────────────────────────────────────────────────────────
 
-const KEYS_HINT = "q quit · r restart server · a access · o open here · s sign-in QR";
+const KEYS_HINT =
+    process.env.PI_POCKET_AUTH_CONFIG === undefined
+        ? "q quit · r restart server · a access · o open here · s sign-in QR"
+        : "q quit · r restart server · external authentication (use your gateway)";
 
 async function showPanel(withQr: boolean): Promise<void> {
     const width = columns();

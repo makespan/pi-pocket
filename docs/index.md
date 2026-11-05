@@ -41,6 +41,7 @@ A drop-in extension stays when Pi Pocket updates, and the owner can turn it off 
 - [self-editing.md](self-editing.md): how to change Pi Pocket's code while it runs, check the change, and undo a change that breaks it.
 - [docker.md](docker.md): running Pi Pocket in a container, with extensions, themes, Pi's folder, and the workspace mounted from the host.
 - [systemd.md](systemd.md): running Pi Pocket as a systemd service, with a template unit whose instance name is the access mode.
+- [external-auth.md](external-auth.md): required startup authentication providers, explicit owner/guest identity mapping, and the external gateway trust boundary.
 - [map.md](map.md): where each part of the code is, and how to add the usual things.
 - [architecture.md](architecture.md): how the parts depend on each other, and the orders that they need.
 - [features.md](features.md): what each feature does, as people use it.

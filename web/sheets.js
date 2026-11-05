@@ -258,7 +258,10 @@ function sheetBody(sheet) {
             body = html`<${ImageViewer} src=${sheet.src} alt=${sheet.alt} />`;
             break;
         case "invite":
-            body = html`<${InviteSheet} session=${sheet.session ?? null} />`;
+            body =
+                store.state.server?.authenticationMode === "external"
+                    ? html`<${PeopleSheet} />`
+                    : html`<${InviteSheet} session=${sheet.session ?? null} />`;
             break;
         case "people":
             body = html`<${PeopleSheet} />`;
@@ -393,9 +396,12 @@ function sheetBody(sheet) {
                 title="Your name"
                 label="Shown on your messages to others"
                 initial=${me?.name ?? ""}
-                footer=${html`<button class="button ghost wide sheet-footer signout" onClick=${signOut}>
+                footer=${
+                    store.state.server?.authenticationMode !== "external" &&
+                    html`<button class="button ghost wide sheet-footer signout" onClick=${signOut}>
                     <${Icon} name="logout" size=${16} /> Sign out
-                </button>`}
+                </button>`
+                }
                 submit=${async (value) => {
                     await api("me", { name: value });
                     const hello = await api("me");

@@ -19,14 +19,17 @@ import { join as joinPage, login, sharePage } from "./http/sign-in.ts";
 import { themeFile } from "./http/theme-routes.ts";
 
 export function createHandler(options: HttpOptions) {
-    const { app } = options;
-    const auth = new Auth(app.config);
+    const { app, externalAuth } = options;
+    const auth = new Auth(app.config, externalAuth);
+
+    app.authenticationMode = auth.external ? "external" : "pairing";
     const api = createApi(options, auth);
 
     return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
         const url = new URL(request.url ?? "/", "http://pocket.local");
 
         try {
+            await externalAuth?.admit(request, app.config);
             let path: string;
 
             try {
@@ -38,6 +41,10 @@ export function createHandler(options: HttpOptions) {
             const parts = path.split("/").filter((part) => part !== "");
 
             response.setHeader("x-content-type-options", "nosniff");
+
+            if (auth.external && (parts[0] === "login" || parts[0] === "join")) {
+                throw new HttpError(403, "Pairing is disabled by external authentication");
+            }
 
             if (parts[0] === "api") {
                 return await api(request, response, url, parts.slice(1));

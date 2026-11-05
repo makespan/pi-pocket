@@ -3,6 +3,7 @@ import { closeSync, constants, fstatSync, openSync, readFileSync, readlinkSync }
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import type { PocketApp } from "../app.ts";
+import type { ExternalAuth } from "../auth-provider.ts";
 import type { User } from "../config.ts";
 import { HttpError } from "../errors.ts";
 import { accepted, compressed, compressible, MIN_COMPRESS_BYTES } from "./compress.ts";
@@ -14,6 +15,8 @@ export const SVG_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'";
 
 export interface HttpOptions {
     app: PocketApp;
+    /** Required startup-loaded policy, if this instance does not use pairing. */
+    externalAuth?: ExternalAuth;
     /** Where the server listens, to offer reachable invite links when the browser uses a loopback address. */
     listen: { host: string; port: number };
     /** Restart the process (exit code 75 under the launcher). */
