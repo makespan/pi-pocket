@@ -2,6 +2,8 @@
 
 External authentication replaces device pairing for an instance. It does **not** create Unix accounts, isolate tenants, or change native authorization. Without `PI_POCKET_AUTH_CONFIG`, pairing works as before.
 
+The bundled [Tailscale provider and gateway contract](tailscale-auth.md) is a tested implementation of this interface.
+
 ## Required startup configuration
 
 Set `PI_POCKET_AUTH_CONFIG` to an absolute JSON file path before starting Pi Pocket. The file must be a regular file owned by the instance's Unix user or root, with no group/other permissions (normally `0600`). Keep its parent directories and provider code writable only by trusted administrators/the instance owner. Symlinks for this file are refused.
