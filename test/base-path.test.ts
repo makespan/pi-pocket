@@ -1,5 +1,15 @@
 // Mount routing and generated addresses, with root and two independent instances behind one prefix-preserving proxy.
-import { cleanUp, context, home, owner, root, scriptedModel, until, work } from "./helpers.ts";
+import {
+    cleanUp,
+    context,
+    home,
+    newSession,
+    owner,
+    root,
+    scriptedModel,
+    until,
+    work,
+} from "./helpers.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -163,6 +173,45 @@ test("base paths accept dotted usernames, normalize only root, and reject ambigu
     );
     assert.equal(loginNext("//evil.example/", ""), "/");
     assert.equal(loginNext("/julian.rath/?x=\r\n", "/julian.rath"), "/julian.rath/");
+});
+
+test("opaque codemode approval IDs keep encoded slashes at root and under mounted prefixes", async () => {
+    for (const app of apps) {
+        const session = await newSession(app);
+        const id = "7:toolu_01/1";
+        const answered = app.approvals.request(
+            {
+                id,
+                conversationId: session,
+                taskId: 7 as never,
+                callId: "toolu_01/1",
+                tool: "bash",
+                subject: "rm generated-file",
+                reason: "risky",
+                createdAt: Date.now(),
+            },
+            context,
+        );
+        const response = await call(app, `/api/approvals/${encodeURIComponent(id)}`, {
+            allow: true,
+        });
+
+        assert.equal(response.status, 200, app.basePath || "root");
+        assert.equal((await answered).allow, true);
+        assert.equal(
+            requestPath(app.url("/api/approvals/a%2F..%2Fb"), app.basePath, true),
+            undefined,
+            "opaque IDs still cannot contain dot segments",
+        );
+    }
+});
+
+test("malformed extension paths retain the API's 400 response without dispatching", async () => {
+    for (const app of apps) {
+        for (const path of ["items/..%2F", "items/a%5Cb"]) {
+            assert.equal((await call(app, `/api/x/mount/${path}`)).status, 400);
+        }
+    }
 });
 
 test("gallery sharing accepts the public base-path helper but not core-only import-map aliases", () => {
