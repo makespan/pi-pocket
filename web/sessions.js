@@ -1,3 +1,4 @@
+import { localStore as localStorage } from "./base-path.js";
 // The sidebar: the rail (Pi, the tools, and you; folded, numbered sessions too) and the session list beside it, in the
 // sidebar, the drawer, and a phone's home screen; and the order and archiving of sessions.
 import { Component } from "preact";

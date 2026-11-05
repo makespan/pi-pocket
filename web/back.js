@@ -1,3 +1,4 @@
+import { appUrl } from "./base-path.js";
 // The back stack: what back (a phone's swipe or back button, the browser's) closes, newest first.
 //
 // Each layer over the conversation (a sheet, the drawer, the launcher, the Files tile or Browser panel where they
@@ -331,7 +332,7 @@ export const routeState = (key) => history.state?.pocket?.[key];
 // ─── Routes ───────────────────────────────────────────────────────────────────────
 
 /** The session list's route. */
-const HOME = "/";
+const HOME = appUrl("/");
 
 /** The route the app shows, ahead of history while layers come off for a new one; how far back the list is from it. */
 let shown = location.pathname;

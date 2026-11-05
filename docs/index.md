@@ -41,6 +41,7 @@ A drop-in extension stays when Pi Pocket updates, and the owner can turn it off 
 - [self-editing.md](self-editing.md): how to change Pi Pocket's code while it runs, check the change, and undo a change that breaks it.
 - [embedders.md](embedders.md): the app bridge, for an embedder (an app that shows Pi Pocket inside itself, such as an Electron or Tauri wrapper): `/api/pocket/info`, `window.pocketHost`, and notifications without Web Push.
 - [docker.md](docker.md): running Pi Pocket in a container, with extensions, themes, Pi's folder, and the workspace mounted from the host.
+- [base-path.md](base-path.md): running separate instances behind one prefix-preserving reverse proxy, and the same-origin isolation limitation.
 - [systemd.md](systemd.md): running Pi Pocket as a systemd service, with a template unit whose instance name is the access mode.
 - [external-auth.md](external-auth.md): required startup authentication providers, explicit owner/guest identity mapping, and the external gateway trust boundary.
 - [map.md](map.md): where each part of the code is, and how to add the usual things.

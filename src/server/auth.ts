@@ -1,10 +1,16 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ConfigStore, Role, User } from "./config.ts";
 import type { ExternalAuth } from "./auth-provider.ts";
 import { HttpError } from "./errors.ts";
 
 export const COOKIE = "pocket_auth";
+
+export function authCookieName(basePath = ""): string {
+    return basePath === ""
+        ? COOKIE
+        : `${COOKIE}_${createHash("sha256").update(basePath).digest("hex").slice(0, 24)}`;
+}
 
 /** How long an invite may last, in minutes: 15 minutes (the default, and always for an owner invite), an hour, a day, or a week. */
 export const INVITE_MINUTES = [15, 60, 24 * 60, 7 * 24 * 60] as const;
@@ -61,10 +67,11 @@ export function setAuthCookie(
     request: IncomingMessage,
     response: ServerResponse,
     token: string,
+    basePath = "",
 ): void {
     const parts = [
-        `${COOKIE}=${encodeURIComponent(token)}`,
-        "Path=/",
+        `${authCookieName(basePath)}=${encodeURIComponent(token)}`,
+        `Path=${basePath}/`,
         "HttpOnly",
         "SameSite=Lax",
         `Max-Age=${60 * 60 * 24 * 365}`,
@@ -74,8 +81,11 @@ export function setAuthCookie(
     response.setHeader("set-cookie", parts.join("; "));
 }
 
-export function clearAuthCookie(response: ServerResponse): void {
-    response.setHeader("set-cookie", `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+export function clearAuthCookie(response: ServerResponse, basePath = ""): void {
+    response.setHeader(
+        "set-cookie",
+        `${authCookieName(basePath)}=; Path=${basePath}/; HttpOnly; SameSite=Lax; Max-Age=0`,
+    );
 }
 
 /**
@@ -90,7 +100,10 @@ export class Auth {
     readonly #config: ConfigStore;
     readonly #external: ExternalAuth | undefined;
 
-    constructor(config: ConfigStore, external?: ExternalAuth) {
+    readonly basePath: string;
+
+    constructor(config: ConfigStore, external?: ExternalAuth, basePath = "") {
+        this.basePath = basePath;
         this.#config = config;
         this.#external = external;
     }
@@ -104,7 +117,7 @@ export class Auth {
             return this.#external.user(request, this.#config);
         }
 
-        const token = parseCookies(request.headers.cookie)[COOKIE];
+        const token = parseCookies(request.headers.cookie)[authCookieName(this.basePath)];
 
         if (token === undefined || token === "") {
             const bearer = String(request.headers.authorization ?? "");

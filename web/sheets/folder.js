@@ -1,3 +1,4 @@
+import { localStore as localStorage } from "../base-path.js";
 // The folder picker, as a desktop's file dialog: places on the left (home, the computer, recent folders), the folders
 // where you are on the right, and Cancel and Open at the bottom. With a mouse, a click selects a folder and a double
 // click goes into it; on a touch screen, a tap goes into it. Open takes the selected folder, or the one you are in.

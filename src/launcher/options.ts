@@ -1,4 +1,5 @@
 /** The launcher's command line: its options, from arguments and the environment, and its help. */
+import { parseBasePath } from "../base-path.ts";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { ACCESS_MODES, type AccessMode, isAccessMode } from "./access.ts";
@@ -19,15 +20,17 @@ Usage: pi-pocket [options]
   -p, --port N        Port (default 8787)
       --cwd DIR       Folder for new sessions (default: the current folder)
       --data DIR      Data folder (default ~/.pi-pocket)
+      --base-path PATH  Public mount point (default /)
       --host HOST     Listen on this address instead of choosing an access mode; it overrides the
                       address a named mode would pick, except with --access tailscale-serve, which
                       always listens on 127.0.0.1
       --rotate-token  Replace the owner sign-in link, signing out the devices that used it
   -h, --help          Show this help
 
-Environment: PI_POCKET_ACCESS, PI_POCKET_PORT, PI_POCKET_DIR, PI_POCKET_HOST, PI_POCKET_GUARD=off`;
+Environment: PI_POCKET_ACCESS, PI_POCKET_PORT, PI_POCKET_DIR, PI_POCKET_HOST, PI_POCKET_BASE_PATH, PI_POCKET_GUARD=off`;
 
 export interface Options {
+    basePath: string;
     access: AccessMode | undefined;
     yes: boolean;
     host: string | undefined;
@@ -40,6 +43,7 @@ export interface Options {
 export function parseArgs(argv: string[]): Options {
     const envAccess = process.env.PI_POCKET_ACCESS;
     const options: Options = {
+        basePath: process.env.PI_POCKET_BASE_PATH ?? "",
         access: isAccessMode(envAccess) ? envAccess : undefined,
         yes: false,
         host: process.env.PI_POCKET_HOST || undefined,
@@ -76,6 +80,8 @@ export function parseArgs(argv: string[]): Options {
             options.host = value();
         } else if (arg === "--port" || arg === "-p") {
             options.port = Number(value());
+        } else if (arg === "--base-path") {
+            options.basePath = value();
         } else if (arg === "--cwd") {
             options.cwd = resolve(value());
         } else if (arg === "--data") {
@@ -92,6 +98,12 @@ export function parseArgs(argv: string[]): Options {
 
     if (!Number.isInteger(options.port) || options.port <= 0 || options.port > 65535) {
         fail("--port must be a port number");
+    }
+
+    try {
+        options.basePath = parseBasePath(options.basePath);
+    } catch (error) {
+        fail((error as Error).message);
     }
 
     return options;

@@ -142,7 +142,7 @@ export class Alerts {
                 failed ? (last.error ?? "The model request failed.") : entryText(last) || "Done.",
                 400,
             ),
-            url: pip ? "/?pip=1" : `/s/${String(id)}`,
+            url: pip ? app.url("/?pip=1") : app.url(`/s/${String(id)}`),
             tag: `done-${String(id)}`,
         };
 
@@ -178,7 +178,10 @@ export class Alerts {
                     `${view.reason}. Pi tries again in ${span(view.until - Date.now())} and goes on by itself. Open the session to try now or stop.`,
                     400,
                 ),
-                url: app.sessionMeta(root)?.pip === undefined ? `/s/${String(root)}` : "/?pip=1",
+                url:
+                    app.sessionMeta(root)?.pip === undefined
+                        ? app.url(`/s/${String(root)}`)
+                        : app.url("/?pip=1"),
                 tag: `limit-${String(root)}`,
             };
 
@@ -239,7 +242,7 @@ export class Alerts {
                                             : `${approval.form.title}: ${approval.reason}`,
                                         400,
                                     ),
-                                    url: `/s/${String(approval.conversationId)}`,
+                                    url: app.url(`/s/${String(approval.conversationId)}`),
                                     tag: `approval-${approval.id}`,
                                 },
                                 "high",
@@ -253,7 +256,7 @@ export class Alerts {
                     const message: PushMessage = {
                         title: `Pi needs approval · ${title}`,
                         body: snippet(call, 400),
-                        url: `/s/${String(approval.conversationId)}`,
+                        url: app.url(`/s/${String(approval.conversationId)}`),
                         tag: `approval-${approval.id}`,
                         approval: { id: approval.id, allow: shown && may },
                     };

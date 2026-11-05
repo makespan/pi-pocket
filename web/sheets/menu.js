@@ -1,3 +1,4 @@
+import { appUrl } from "../base-path.js";
 // The menu: what can be done in this session and in the app.
 import { useLayoutEffect, useRef } from "preact/hooks";
 import { browserAvailable, displayUrl, setBrowserOpen } from "../browser.js";
@@ -514,7 +515,7 @@ export function MenuSheet({ places = true }) {
             }
             ${
                 conversation &&
-                html`<a class="list-item" href=${`/api/c/${conversation.id}/export`} download>
+                html`<a class="list-item" href=${appUrl(`/api/c/${conversation.id}/export`)} download>
                     <span>Export as Markdown</span>
                     <span class="muted small">the whole history</span>
                 </a>`

@@ -152,6 +152,7 @@ import {
 import { Spend } from "./spend.ts";
 import { Transcripts } from "./transcripts.ts";
 import { Watches } from "./watches.ts";
+import { appPath, parseBasePath } from "../base-path.ts";
 import { Workspace } from "./workspace.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -344,6 +345,7 @@ function failedSubagents(
 }
 
 export interface OpenOptions {
+    basePath?: string;
     dataDir: string;
     defaultCwd: string;
     supervised: boolean;
@@ -367,6 +369,13 @@ export interface OpenOptions {
 export class PocketApp {
     /** Set by the startup HTTP boundary, not an optional extension setting. */
     authenticationMode: "pairing" | "external" = "pairing";
+    readonly basePath: string;
+
+    /** An app-owned public path, including this instance's mount point. */
+    url(path: string): string {
+        return appPath(this.basePath, path);
+    }
+
     readonly config: ConfigStore;
     /** Push subscriptions and their keys; undefined until the server opened. */
     pushStore: PushStore | undefined;
@@ -510,6 +519,7 @@ export class PocketApp {
     readonly now: () => number;
 
     private constructor(options: OpenOptions) {
+        this.basePath = parseBasePath(options.basePath);
         this.#configureModels = options.configureModels;
         this.#home = options.home ?? (process.env.HOME || homedir());
         this.now = options.now ?? Date.now;
@@ -607,6 +617,7 @@ export class PocketApp {
             },
         });
         this.themes = new Themes({
+            basePath: this.basePath,
             builtIn: join(APP_ROOT, "web", "themes"),
             dataDir: options.dataDir,
             notify: (message) => this.ownerNotice("warning", message),
@@ -626,6 +637,7 @@ export class PocketApp {
             log: (line) => this.#log(line),
         });
         this.webs = new ExtensionWebs({
+            basePath: this.basePath,
             changed: (access) => this.#websChanged(access),
             deliver: (part, access, event, data, to) => {
                 for (const client of this.#clients) {

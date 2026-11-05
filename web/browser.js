@@ -1,3 +1,4 @@
+import { sessionStore as sessionStorage } from "./base-path.js";
 // The Browser panel's state, for everything that opens it: whether it is open, and opening an address in it. The
 // panel itself is browser-panel.js.
 

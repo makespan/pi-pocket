@@ -1,3 +1,8 @@
+import {
+    appRoute,
+    localStore as localStorage,
+    sessionStore as sessionStorage,
+} from "./base-path.js";
 // PiP, "Pi in Pocket": the owner's assistant, in a small window over whatever is open, or (Appearance → PiP → Board)
 // opened as a conversation in the session's place, with its top bar, menu, and every step. It stays out of the way until
 // called: Alt+A, the rail's PiP button, the places, the launcher, or `/pip`; and a small mark in the corner shows only
@@ -614,11 +619,15 @@ function linkSessions(text) {
 /** The session a link in PiP's words opens: `/s/12`, written whole or as an address of this app. */
 function sessionOf(anchor) {
     const href = anchor.getAttribute("href") ?? "";
-    const match = /^(?:https?:\/\/[^/]+)?\/s\/(\d+)\/?$/.exec(href);
 
-    return match && (!/^https?:/.test(href) || new URL(href).origin === location.origin)
-        ? Number(match[1])
-        : null;
+    try {
+        const url = new URL(href, location.origin);
+        const match = /^\/s\/(\d+)\/?$/.exec(appRoute(url.pathname) ?? "");
+
+        return match && url.origin === location.origin ? Number(match[1]) : null;
+    } catch {
+        return null;
+    }
 }
 
 // ─── The panel ──────────────────────────────────────────────────────────────

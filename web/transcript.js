@@ -1,3 +1,4 @@
+import { appUrl, sessionStore as sessionStorage } from "./base-path.js";
 // The conversation, as a column of turns: a person's message, then what Pi did (its thinking and tool calls folded
 // into one line that opens into a timeline), then Pi's reply, any approval, and the live line while Pi works.
 import { Component } from "preact";
@@ -1425,7 +1426,9 @@ function ToolStep({
         ? view.artifacts.find((each) => each.id === artifact.id)?.type
         : undefined;
     const artifactSrc = artifact
-        ? `/a/${view.conversation.id}/${encodeURIComponent(artifact.id)}/${artifact.version}`
+        ? appUrl(
+              `/a/${view.conversation.id}/${encodeURIComponent(artifact.id)}/${artifact.version}`,
+          )
         : null;
     const child =
         call.name === "subagent"

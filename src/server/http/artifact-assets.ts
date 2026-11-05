@@ -49,7 +49,9 @@ export function assetRoot(
     const until = String(app.now() + 12 * 60 * 60 * 1000);
     const signed = `${version}~${user.id}~${until}~${signature(app, conversation, artifact, String(version), user, until)}`;
 
-    return `/a/${encodeURIComponent(conversation)}/${encodeURIComponent(artifact)}/${encodeURIComponent(signed)}/`;
+    return app.url(
+        `/a/${encodeURIComponent(conversation)}/${encodeURIComponent(artifact)}/${encodeURIComponent(signed)}/`,
+    );
 }
 
 /** Recheck the person's current access. Removing the person or rotating either token revokes this capability. */
@@ -148,7 +150,7 @@ export async function publicArtifactBundle(
         throw new HttpError(404, "No such page");
     }
 
-    const root = `${origin(request)}/pub/${encodeURIComponent(token!)}/`;
+    const root = `${origin(request)}${app.url(`/pub/${encodeURIComponent(token!)}/`)}`;
     const { found, share } = published;
 
     if (name !== "") {

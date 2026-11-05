@@ -1,3 +1,4 @@
+import { localStore as localStorage, sessionStore as sessionStorage } from "./base-path.js";
 // The Files tile: the session's folder as a tree beside a file viewer, and Changes, a review of its uncommitted
 // changes. It docks beside the conversation where the Browser and People panels do (one of them at a time), and
 // covers the screen on phones. Alt+E, the menu's Files tile, the launcher, or /files show it (and the top bar's folder

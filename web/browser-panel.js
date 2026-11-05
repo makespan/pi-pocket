@@ -1,3 +1,4 @@
+import { appUrl, localStore as localStorage } from "./base-path.js";
 // The Browser panel: the session's page in the server's browser, the same one Pi uses with its browser tool. Frames
 // come as JPEGs by long polling (which passes any tunnel); taps, drags, scrolls, and keys go back as input events. Wide
 // screens show it as a window beside the conversation; phones show it full screen.
@@ -84,7 +85,7 @@ function useFrames(conversationId, active) {
 
                 try {
                     const response = await fetch(
-                        `/api/c/${conversationId}/browser/frame?after=${seq}`,
+                        appUrl(`/api/c/${conversationId}/browser/frame?after=${seq}`),
                         { signal: request.signal, cache: "no-store" },
                     );
 

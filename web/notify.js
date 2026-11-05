@@ -1,3 +1,4 @@
+import { appUrl } from "./base-path.js";
 // Phone notifications: this device subscribes to the server's pushes, and each person picks what they hear about.
 import { useEffect, useState } from "preact/hooks";
 import { callHost, hostCan } from "./host.js";
@@ -15,7 +16,9 @@ export function registerWorker() {
         return Promise.resolve(null);
     }
 
-    registering ??= navigator.serviceWorker.register("/sw.js").catch(() => null);
+    registering ??= navigator.serviceWorker
+        .register(appUrl("/sw.js"), { scope: appUrl("/") })
+        .catch(() => null);
 
     return registering;
 }

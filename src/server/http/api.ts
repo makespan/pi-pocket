@@ -229,7 +229,7 @@ export function createApi(options: HttpOptions, auth: Auth) {
         }
 
         if (first === "logout" && method === "POST") {
-            clearAuthCookie(response);
+            clearAuthCookie(response, app.basePath);
 
             return json(response, 200, { ok: true });
         }
@@ -969,7 +969,7 @@ export function createApi(options: HttpOptions, auth: Auth) {
             // A tunnel the launcher started is the way in for other devices.
             const tunnel = loopback ? app.access?.url : undefined;
             const base = tunnel ?? lan[0] ?? here;
-            const link = `${base}/join/${invite.code}`;
+            const link = `${base}${app.url(`/join/${invite.code}`)}`;
             // An invite whose QR code could not be made is never shown: it ends rather than stay live, unseen.
             const svg = await QRCode.toString(link, {
                 type: "svg",
@@ -987,7 +987,7 @@ export function createApi(options: HttpOptions, auth: Auth) {
                 url: link,
                 svg,
                 alternatives: (tunnel === undefined ? lan.slice(1) : lan).map(
-                    (address) => `${address}/join/${invite.code}`,
+                    (address) => `${address}${app.url(`/join/${invite.code}`)}`,
                 ),
                 // Only this device can open a loopback link.
                 local: loopback && lan.length === 0 && tunnel === undefined,

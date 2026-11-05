@@ -1,3 +1,4 @@
+import { appUrl, shareCache } from "./base-path.js";
 // Things shared to Pi Pocket from another app: a link, some text, a screenshot. The service worker keeps them (see
 // sw.js), and this sheet puts them into the message box of a session, to send from there.
 import {
@@ -12,7 +13,7 @@ import {
 } from "./store.js";
 import { html, Icon, Loader, shortPath, Sheet, timeAgo } from "./ui.js";
 
-const SHARE_CACHE = "pocket-share";
+const SHARE_CACHE = shareCache;
 
 /**
  * What was shared under `id`: `{ text, files }`, or null when it is gone. Taking it removes it, with anything an
@@ -24,7 +25,7 @@ export async function takeShare(id) {
     }
 
     const cache = await caches.open(SHARE_CACHE);
-    const stored = await cache.match(`/share/${id}/meta`);
+    const stored = await cache.match(appUrl(`/share/${id}/meta`));
 
     if (!stored) {
         return null;
@@ -34,7 +35,7 @@ export async function takeShare(id) {
     const files = [];
 
     for (const [index, file] of meta.files.entries()) {
-        const body = await cache.match(`/share/${id}/file/${index}`);
+        const body = await cache.match(appUrl(`/share/${id}/file/${index}`));
 
         if (body) {
             files.push(

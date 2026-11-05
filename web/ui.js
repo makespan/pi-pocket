@@ -1,3 +1,4 @@
+import { appUrl, appRoute } from "./base-path.js";
 // Shared bits: htm binding, markdown, formatting, icons, the bottom sheet, and small controls (switches, menu rows).
 
 import DOMPurify from "dompurify";
@@ -25,11 +26,11 @@ const currentConversation = () => store.state.view.conversation?.id;
 
 /** An image file on the server (absolute, `~/…`, or relative to the session's folder), shown through the app. */
 export const fileUrl = (path, conversationId = currentConversation()) =>
-    `/api/c/${conversationId}/file?path=${encodeURIComponent(path)}`;
+    appUrl(`/api/c/${conversationId}/file?path=${encodeURIComponent(path)}`);
 
 /** The `index`th image stored in a message: a pasted image or one a tool returned. */
 export const entryImageUrl = (entryId, index, conversationId = currentConversation()) =>
-    `/api/c/${conversationId}/image/${entryId}/${index}`;
+    appUrl(`/api/c/${conversationId}/image/${entryId}/${index}`);
 
 /** Attached types that go to a model that takes images, up to this size (`model-images.ts`). */
 const MODEL_IMAGE_TYPES = new Set([
@@ -87,8 +88,12 @@ function imageSource(src, conversationId) {
         return value;
     }
 
-    if (value.startsWith("/api/") || value.startsWith("/a/")) {
+    if (/^\/(?:api|a)\//.test(appRoute(value) ?? "")) {
         return value;
+    }
+
+    if (value.startsWith("/api/") || value.startsWith("/a/")) {
+        return appUrl(value);
     }
 
     const file = /^file:\/\//i.test(value);
@@ -380,6 +385,16 @@ function sanitize(html, fold) {
 
     // Local Markdown links open the same viewer as inline code paths.
     for (const link of fragment.querySelectorAll("a[href]")) {
+        const href = link.getAttribute("href") ?? "";
+
+        // Session links are a stored Markdown convention; prefix only that app-owned route, never arbitrary text.
+        if (
+            /^\/s\/\d+(?:[/?#]|$)/.test(href) &&
+            !/^\/s\/\d+(?:[/?#]|$)/.test(appRoute(href) ?? "")
+        ) {
+            link.setAttribute("href", appUrl(href));
+        }
+
         const path = linkedPath(link.getAttribute("href") ?? "");
 
         if (path !== null) {
@@ -757,7 +772,7 @@ function linkedPath(href) {
 
     if (
         /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(withoutLine) ||
-        /^\/(?:api|a|s|login|join|share)(?:\/|[?#]|$)/.test(path)
+        /^\/(?:api|a|s|login|join|share)(?:\/|[?#]|$)/.test(appRoute(path) ?? path)
     ) {
         return null;
     }

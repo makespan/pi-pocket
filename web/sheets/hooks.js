@@ -1,3 +1,4 @@
+import { appUrl } from "../base-path.js";
 // Webhooks and watches: addresses other services post to, each turning every post into a message to Pi in a session or
 // to PiP; and the repository watches PiP set up, which need no address.
 import { useEffect, useRef, useState } from "preact/hooks";
@@ -78,7 +79,7 @@ function HookRow({ hook, base, fresh, editable, onSaved, onRemove, onRotate }) {
         <div class="hook-head">
             <strong class="grow">${hook.name}</strong>
             <span class="muted small">
-                to ${hook.pip ? "PiP" : html`<a href=${`/s/${hook.target}`} onClick=${open}>${hook.targetTitle}</a>`}
+                to ${hook.pip ? "PiP" : html`<a href=${appUrl(`/s/${hook.target}`)} onClick=${open}>${hook.targetTitle}</a>`}
             </span>
         </div>
         ${
@@ -187,7 +188,7 @@ function WatchRow({ watch, onRemove, onAnyone }) {
         <div class="hook-head">
             <strong class="grow">${watch.repo}</strong>
             <span class="muted small">
-                to ${watch.pip ? "PiP" : html`<a href=${`/s/${watch.target}`} onClick=${open}>${watch.targetTitle}</a>`}
+                to ${watch.pip ? "PiP" : html`<a href=${appUrl(`/s/${watch.target}`)} onClick=${open}>${watch.targetTitle}</a>`}
             </span>
         </div>
         <div class="muted small">${watch.events.join(", ")}${narrowed.length > 0 ? ` · ${narrowed.join(", ")}` : ""}</div>

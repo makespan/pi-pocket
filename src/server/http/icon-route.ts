@@ -1,5 +1,6 @@
 /** `/app-icon.png?frame=&card=&ring1=&ring2=&pi=&size=&maskable=1`: the app icon in those colors (hex, no `#`), as `icon-render.ts` draws it. */
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { appPath } from "../../base-path.ts";
 import { HttpError } from "../errors.ts";
 import { storedIconColors } from "../icon-store.ts";
 import { APP_ICON, type IconColors, MIN_ICON, renderIcon } from "../icon-render.ts";
@@ -155,17 +156,21 @@ const address = (colors: string[], size: number, maskable = false) => {
 };
 
 /**
- * The home-screen icon's address for the colors in the cookie, or the owner's, or null. iOS may read the icon from the page
- * as served, so the page carries it.
+ * The home-screen icon's address under this mount for the colors in the cookie, or the owner's, or null. iOS may read
+ * the icon from the page as served, so the page carries it.
  */
-export function iconAddress(request: IncomingMessage, dataDir: string): string | null {
+export function iconAddress(
+    request: IncomingMessage,
+    dataDir: string,
+    basePath = "",
+): string | null {
     const colors = cookieColors(request, dataDir);
 
-    return colors === null ? null : address(colors, 180);
+    return colors === null ? null : appPath(basePath, address(colors, 180));
 }
 
 /**
- * The web app manifest with the icons and colors of the cookie, or null without one (the file is served as it is).
+ * The web app manifest with the icons (root-relative: `serveManifest` adds the mount) and colors of the cookie, or null without one (the file is served as it is).
  * iOS and Android read the manifest's icons too, and an icon there that is not the page's own wins over it.
  */
 export function manifestFor(

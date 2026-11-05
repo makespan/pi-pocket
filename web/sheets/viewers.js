@@ -1,3 +1,4 @@
+import { appUrl } from "../base-path.js";
 // Artifacts and images, each in a viewer of its own; and sharing an artifact to anyone with a link.
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useArtifactBridge } from "../artifact-bridge.js";
@@ -79,7 +80,9 @@ export function ArtifactViewer({ id, version }) {
     const [nonce, setNonce] = useState(0);
     const latest = artifact?.versions.at(-1)?.version;
     const theme = artifact?.type === "markdown" ? themeQuery() : "";
-    const src = `/a/${view.conversation.id}/${encodeURIComponent(id)}/${shown ?? "latest"}${theme}`;
+    const src = appUrl(
+        `/a/${view.conversation.id}/${encodeURIComponent(id)}/${shown ?? "latest"}${theme}`,
+    );
     // A published page is out of the reach of an invite to one session, so only those who see every session publish.
     const shareable = me?.role !== "viewer" && me?.sessions === undefined && me?.role !== undefined;
     // The Design canvas (a built-in module) shows an HTML page with its versions, comments, and tweaks.

@@ -1,3 +1,4 @@
+import { localStore as localStorage } from "./base-path.js";
 // What this person sent from this browser in one session, oldest first: ↑ recalls it and Ctrl+R searches it.
 import { HISTORY as KEY, HISTORY_MAX as MAX, personStorage } from "./person-storage.js";
 

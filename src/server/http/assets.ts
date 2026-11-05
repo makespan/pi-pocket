@@ -1,4 +1,5 @@
 /** The web app's own files and the modules it imports, its content security policy, and image files it shows. */
+import { appPath } from "../../base-path.ts";
 import { createHash } from "node:crypto";
 import { closeSync, createReadStream, openSync, readFileSync, readSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -12,6 +13,7 @@ import {
     type Encoding,
     MIN_COMPRESS_BYTES,
 } from "./compress.ts";
+import { manifestFor } from "./icon-route.ts";
 import { send } from "./io.ts";
 
 export const WEB = join(APP_ROOT, "web");
@@ -252,7 +254,11 @@ function preloads(imports: Record<string, string>): string[] {
 }
 
 /** The app page, with its content security policy, and the modules it loads listed for the browser to fetch at once. */
-export function serveApp(response: ServerResponse, icon: string | null = null): void {
+export function serveApp(
+    response: ServerResponse,
+    basePath = "",
+    icon: string | null = null,
+): void {
     let body: string;
 
     try {
@@ -263,15 +269,19 @@ export function serveApp(response: ServerResponse, icon: string | null = null): 
         return;
     }
 
+    body = body
+        .replaceAll("__POCKET_BASE_JSON__", JSON.stringify(basePath))
+        .replaceAll("__POCKET_BASE__", basePath);
+
     // The home-screen icon in the colors this browser chose, in the page as it is served (`http/icon-route.ts`).
     if (icon !== null) {
         body = body.replace(
-            '<link rel="apple-touch-icon" href="/apple-touch-icon.png" />',
+            `<link rel="apple-touch-icon" href="${basePath}/apple-touch-icon.png" />`,
             () => `<link rel="apple-touch-icon" href="${icon}" />`,
         );
     }
 
-    // The policy is of the page as it is stored: links are not scripts, and add nothing to it.
+    // The policy is of the page as served for this mount: links are not scripts, and add nothing to it.
     const policy = appPolicy(body);
 
     try {
@@ -280,8 +290,15 @@ export function serveApp(response: ServerResponse, icon: string | null = null): 
             string,
             string
         >;
-        const links = preloads(imports)
-            .map((address) => `<link rel="modulepreload" href="${address}" />`)
+        const links = preloads(
+            Object.fromEntries(
+                Object.entries(imports).map(([name, address]) => [
+                    name,
+                    address.slice(basePath.length),
+                ]),
+            ),
+        )
+            .map((address) => `<link rel="modulepreload" href="${basePath}${address}" />`)
             .join("");
 
         body = body.replace("</head>", () => `${links}</head>`);
@@ -292,6 +309,33 @@ export function serveApp(response: ServerResponse, icon: string | null = null): 
     send(response, 200, body, "text/html; charset=utf-8", {
         "cache-control": "no-cache",
         "content-security-policy": policy,
+    });
+}
+
+/**
+ * The PWA's public identity, scope, share target and icons, generated for this mount, with the icons of the colors this
+ * browser chose when it has chosen (`http/icon-route.ts`).
+ */
+export function serveManifest(
+    request: IncomingMessage,
+    response: ServerResponse,
+    basePath: string,
+    dataDir: string,
+): void {
+    const file = readFileSync(join(WEB, "manifest.webmanifest"), "utf8");
+    const manifest = JSON.parse(manifestFor(request, file, dataDir) ?? file);
+
+    manifest.id = appPath(basePath, "/");
+    manifest.start_url = appPath(basePath, "/");
+    manifest.scope = appPath(basePath, "/");
+    manifest.share_target.action = appPath(basePath, "/share");
+
+    for (const icon of manifest.icons) {
+        icon.src = appPath(basePath, icon.src);
+    }
+
+    send(response, 200, JSON.stringify(manifest), "application/manifest+json", {
+        "cache-control": "no-cache",
     });
 }
 

@@ -1,3 +1,4 @@
+import { appUrl } from "./base-path.js";
 // Code blocks in replies that show more than code: an HTML page previewed (and run, on a tap), an SVG image, a diff
 // in the diff viewer. ui.js draws every code block as code; this module gives `Markdown` the component for these when
 // it loads (`setRichBlock`), so ui.js does not import it.
@@ -283,7 +284,7 @@ setRichBlock(RichBlock);
 const pages = new Map();
 const PAGES_KEPT = 20;
 const addressOf = (conversationId, id, version) =>
-    `/a/${conversationId}/${encodeURIComponent(id)}/${version}`;
+    appUrl(`/a/${conversationId}/${encodeURIComponent(id)}/${version}`);
 
 /** The entry for an address, now the most recently used, or undefined. */
 function recent(address) {

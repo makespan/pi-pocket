@@ -213,7 +213,9 @@ A message to Pi names its person in its request id (`requests.ts`):
 
 ## A request
 
-`http.ts` routes by the first path segment, and turns whatever a route throws into an answer: an `HttpError`'s status and message, or a logged 500.
+`http.ts` validates the raw request target and strips exactly one configured base path (`src/base-path.ts`) before URL normalization; paths outside that mount are refused. Public addresses are generated with `PocketApp.url`, not by rewriting responses. Browser URL and storage helpers in `web/base-path.js` read the immutable mount injected before scripts; the app page's CSP hashes are computed after template substitution. Cookies, manifest, workers, and browser state are mount-scoped; this prevents collisions, not same-origin hostile-tenant access ([proxy contract](base-path.md)).
+
+`http.ts` routes by the first remaining path segment, and turns whatever a route throws into an answer: an `HttpError`'s status and message, or a logged 500.
 
 `/api` (`http/api.ts`) checks, in this order:
 

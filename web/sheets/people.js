@@ -1,3 +1,4 @@
+import { appUrl } from "../base-path.js";
 // People with access to this server, and invites for more.
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Avatar, avatarBlob } from "../avatar.js";
@@ -33,7 +34,7 @@ const cancelInvite = (invite) => {
     // A server that says how long its invites last also ends them on request; an older one has no such route.
     if (invite?.minutes !== undefined) {
         // Sent even when the page goes (a reload, a web file edited), so it is never left live and unseen.
-        fetch("/api/invite/cancel", {
+        fetch(appUrl("/api/invite/cancel"), {
             method: "POST",
             keepalive: true,
             headers: { "X-Pocket": "1", "content-type": "application/json" },

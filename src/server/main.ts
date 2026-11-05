@@ -2,11 +2,12 @@
 /**
  * Pi Pocket server. Run it through `bin/pi-pocket.js`, which restarts it when the app asks to (exit code 75).
  *
- *   node bin/pi-pocket.js [--host 127.0.0.1] [--port 8787] [--cwd DIR] [--data DIR] [--rotate-token]
+ *   node bin/pi-pocket.js [--host 127.0.0.1] [--port 8787] [--cwd DIR] [--data DIR] [--base-path PATH] [--rotate-token]
  *
  * Under the launcher (PI_POCKET_LAUNCHER=1 with an IPC channel) the server reports `ready` instead of printing its
  * sign-in links, and takes `access` messages that say how other devices reach it (a tunnel's public URL).
  */
+import { parseBasePath } from "../base-path.ts";
 import { chmodSync, mkdirSync } from "node:fs";
 import { createServer } from "node:http";
 import { networkInterfaces } from "node:os";
@@ -31,6 +32,7 @@ const launcher = process.env.PI_POCKET_LAUNCHER === "1" && typeof process.send =
 
 function parseArgs(argv: string[]) {
     const options = {
+        basePath: process.env.PI_POCKET_BASE_PATH ?? "",
         host: process.env.PI_POCKET_HOST ?? "127.0.0.1",
         port: Number(process.env.PI_POCKET_PORT ?? 8787),
         cwd: process.cwd(),
@@ -56,6 +58,8 @@ function parseArgs(argv: string[]) {
             options.host = value();
         } else if (arg === "--port" || arg === "-p") {
             options.port = Number(value());
+        } else if (arg === "--base-path") {
+            options.basePath = value();
         } else if (arg === "--cwd") {
             options.cwd = resolve(value());
         } else if (arg === "--data") {
@@ -64,7 +68,7 @@ function parseArgs(argv: string[]) {
             options.rotateToken = true;
         } else if (arg === "--help" || arg === "-h") {
             console.log(
-                "pi-pocket [--host 127.0.0.1] [--port 8787] [--cwd DIR] [--data DIR] [--rotate-token]",
+                "pi-pocket [--host 127.0.0.1] [--port 8787] [--cwd DIR] [--data DIR] [--base-path PATH] [--rotate-token]",
             );
             process.exit(0);
         } else {
@@ -85,6 +89,8 @@ function parseArgs(argv: string[]) {
             "PI_POCKET_KEEPALIVE_SECONDS must be a whole number of seconds from 1 to 3600",
         );
     }
+
+    options.basePath = parseBasePath(options.basePath);
 
     return options;
 }
@@ -219,6 +225,7 @@ const [{ PocketApp: App }, { createHandler: makeHandler }, { watchTree }] = awai
     import("./reload.ts"),
 ]);
 const opened = await App.open({
+    basePath: options.basePath,
     dataDir: options.data,
     defaultCwd: options.cwd,
     supervised: process.env.PI_POCKET_SUPERVISED === "1",
@@ -270,7 +277,7 @@ if (launcher) {
         type: "ready",
         host: options.host,
         port: options.port,
-        loginPath: externalAuth === undefined ? `/login?token=${token}` : undefined,
+        loginPath: externalAuth === undefined ? opened.url(`/login?token=${token}`) : undefined,
         externalAuth: externalAuth !== undefined,
     });
 } else if (externalAuth !== undefined) {
@@ -298,7 +305,7 @@ if (launcher) {
     );
 
     for (const host of hosts) {
-        console.log(`    http://${host}:${options.port}/login?token=${token}`);
+        console.log(`    http://${host}:${options.port}${opened.url(`/login?token=${token}`)}`);
     }
 
     console.log("  Other devices: open the app's menu and use “Sign in another device”.\n");

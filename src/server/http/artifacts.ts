@@ -321,7 +321,9 @@ export async function artifact(
     const root =
         capability === undefined
             ? assetRoot(app, conv!, id, found.version, user)
-            : `/a/${encodeURIComponent(conv!)}/${encodeURIComponent(id)}/${encodeURIComponent(version!)}/`;
+            : app.url(
+                  `/a/${encodeURIComponent(conv!)}/${encodeURIComponent(id)}/${encodeURIComponent(version!)}/`,
+              );
 
     if (name !== "") {
         return artifactAssetResponse(

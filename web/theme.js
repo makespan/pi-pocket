@@ -1,3 +1,4 @@
+import { appUrl, localStore as localStorage } from "./base-path.js";
 // Appearance: the theme (a folder of CSS the server lists, `themes.ts`), the colors (Omarchy palettes as CSS variables,
 // a theme folder's own, or "Follow desktop": the Omarchy theme this machine runs), tiled windows, motion, text size,
 // density, and the sidebar's shape. Saved per browser. index.html applies the last look before the first paint from
@@ -614,7 +615,7 @@ export function apply() {
     // or the theme's own shows.
     const wallpaper =
         p.theme === "desktop" && p.wallpaper && p.tiling && desktop?.wallpaper
-            ? `url("/api/theme/wallpaper?v=${encodeURIComponent(desktop.stamp)}")`
+            ? `url("${appUrl(`/api/theme/wallpaper?v=${encodeURIComponent(desktop.stamp)}`)}")`
             : null;
     // Width other than Comfortable is the person's choice, inline over the theme's; Comfortable leaves it to the theme.
     const width = WIDTHS[p.width];

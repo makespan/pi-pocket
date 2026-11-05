@@ -1,3 +1,4 @@
+import { appUrl, appRoute } from "./base-path.js";
 // The sign-in screen, for a browser that is not signed in.
 
 import { useState } from "preact/hooks";
@@ -16,7 +17,11 @@ export function SignIn() {
         try {
             const url = new URL(text, location.origin);
 
-            if (url.pathname.startsWith("/join/") || url.searchParams.has("token")) {
+            if (
+                url.origin === location.origin &&
+                appRoute(url.pathname) !== null &&
+                (appRoute(url.pathname).startsWith("/join/") || appRoute(url.pathname) === "/login")
+            ) {
                 location.href = `${url.pathname}${url.search}`;
 
                 return;
@@ -30,8 +35,8 @@ export function SignIn() {
         const code = text.toLowerCase().replace(/\s+/g, "");
 
         location.href = /^[a-z0-9]{10}$/.test(code)
-            ? `/join/${code}`
-            : `/login?token=${encodeURIComponent(text)}`;
+            ? appUrl(`/join/${code}`)
+            : appUrl(`/login?token=${encodeURIComponent(text)}`);
     };
 
     return html`<div class="signin" data-part="sign-in">

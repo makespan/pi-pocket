@@ -1,3 +1,10 @@
+import {
+    storageEventKey,
+    appUrl,
+    appRoute,
+    localStore as localStorage,
+    sessionStore as sessionStorage,
+} from "./base-path.js";
 // App state, the server connection, and API calls. Components read `store.state` and re-render on `store.subscribe`.
 import { onRoute, popRoute, pushRoute, routeState } from "./back.js";
 import { hostCan, onPageVisibility, pageVisible } from "./host.js";
@@ -434,7 +441,7 @@ function opened(id) {
 opened(store.state.conversationId);
 
 function routeConversation() {
-    const match = /^\/s\/(\d+)/.exec(location.pathname);
+    const match = /^\/s\/(\d+)/.exec(appRoute(location.pathname) ?? "");
 
     return match ? Number(match[1]) : null;
 }
@@ -479,7 +486,13 @@ function peopleFor(id, reads = store.state.chatReads) {
 
 // Another tab of this browser read a chat (or the storage was cleared): the list's marks follow.
 addEventListener("storage", (event) => {
-    if (event.key === null || event.key.startsWith(CHAT_READ_PREFIX)) {
+    const key = storageEventKey(event.key);
+
+    if (key === undefined) {
+        return;
+    }
+
+    if (key === null || key.startsWith(CHAT_READ_PREFIX)) {
         setChanged({ chatReads: kept(store.state.chatReads, readChatReads()) });
     }
 });
@@ -607,7 +620,13 @@ export function toggleFoldedLinked(id) {
 
 // Another tab of this browser folded or unfolded: this one follows.
 addEventListener("storage", (event) => {
-    if (event.key === FOLDED_LINKED_KEY) {
+    const key = storageEventKey(event.key);
+
+    if (key === undefined) {
+        return;
+    }
+
+    if (key === FOLDED_LINKED_KEY) {
         store.set({ foldedLinked: readFoldedLinked() });
     }
 });
@@ -782,7 +801,7 @@ export async function api(path, body, options = {}) {
         }
     }
 
-    const response = await fetch(`/api/${path}`, init);
+    const response = await fetch(appUrl(`/api/${path}`), init);
     const text = await response.text();
     let data;
 
@@ -987,7 +1006,7 @@ export function signOut() {
         }
 
         accountChannel?.postMessage({ person: null, signedOut: true });
-        reloadAccount("/");
+        reloadAccount(appUrl("/"));
     });
 }
 
@@ -2148,7 +2167,7 @@ function streamEvents(query) {
     const generation = accountGeneration;
 
     helloAsked = moment();
-    const events = new EventSource(`/api/events?${query}`);
+    const events = new EventSource(appUrl(`/api/events?${query}`));
     /** The session its address names: a retry by the browser asks for that one again. */
     const named = store.state.conversationId;
     /** The first batch arrived whole: the session's view, or the session list when no session is open. */
@@ -2306,7 +2325,9 @@ function pollEvents() {
             request?.abort();
 
             if (session) {
-                fetch(`/api/poll?session=${session}&close=1`, { keepalive: true }).catch(() => {});
+                fetch(appUrl(`/api/poll?session=${session}&close=1`), { keepalive: true }).catch(
+                    () => {},
+                );
             }
         },
     };
@@ -2325,7 +2346,9 @@ function pollEvents() {
                 // A poll the server no longer knows (it started again, or this tab fell far behind) attaches afresh: it
                 // names the session shown now, which a switch may have changed (`show`).
                 const response = await fetch(
-                    `/api/poll?${eventsQuery(session === null)}${session ? `&session=${session}&ack=${ack}` : ""}`,
+                    appUrl(
+                        `/api/poll?${eventsQuery(session === null)}${session ? `&session=${session}&ack=${ack}` : ""}`,
+                    ),
                     { signal: request.signal, cache: "no-store" },
                 );
 
@@ -2477,7 +2500,7 @@ export function navigate(
     conversationId,
     { replace = false, sheet = null, over = null, back = false } = {},
 ) {
-    const path = conversationId === null ? "/" : `/s/${conversationId}`;
+    const path = conversationId === null ? appUrl("/") : appUrl(`/s/${conversationId}`);
 
     // A new route says what it is over; the same route keeps what its entry already says.
     const route = location.pathname !== path || store.state.conversationId !== conversationId;

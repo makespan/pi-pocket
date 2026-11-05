@@ -3,7 +3,7 @@
  * modules and public pages, and the web app's own files. Each part lives in `http/`; this file routes a request to it and turns what it
  * throws into an answer.
  */
-import { readFileSync } from "node:fs";
+import { requestPath } from "../base-path.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join, normalize, sep } from "node:path";
 import { Auth } from "./auth.ts";
@@ -11,7 +11,7 @@ import { describe, HttpError } from "./errors.ts";
 import { createApi } from "./http/api.ts";
 import { artifact } from "./http/artifacts.ts";
 import { publicArtifactBundle } from "./http/artifact-assets.ts";
-import { appleTouchIcon, iconAddress, iconRoute, manifestFor } from "./http/icon-route.ts";
+import { appleTouchIcon, iconAddress, iconRoute } from "./http/icon-route.ts";
 import { extensionFile } from "./http/extension-routes.ts";
 import { hookRoute } from "./http/hook-routes.ts";
 import { linkRoute } from "./http/link-routes.ts";
@@ -21,6 +21,7 @@ import {
     katexFont,
     serveApp,
     serveFile,
+    serveManifest,
     VENDOR,
     WEB,
 } from "./http/assets.ts";
@@ -33,16 +34,24 @@ const BRIDGE_VERSION = 1;
 
 export function createHandler(options: HttpOptions) {
     const { app, externalAuth } = options;
-    const auth = new Auth(app.config, externalAuth);
+    const auth = new Auth(app.config, externalAuth, app.basePath);
 
     app.authenticationMode = auth.external ? "external" : "pairing";
     const api = createApi(options, auth);
 
     return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
-        const url = new URL(request.url ?? "/", "http://pocket.local");
-
         try {
             await externalAuth?.admit(request, app.config);
+            const target = request.url ?? "/";
+            const stripped = requestPath(target, app.basePath);
+
+            if (stripped === undefined) {
+                throw new HttpError(404, "Not found");
+            }
+
+            const url = new URL(target, "http://pocket.local");
+
+            url.pathname = stripped;
             let path: string;
 
             try {
@@ -143,26 +152,10 @@ export function createHandler(options: HttpOptions) {
                 return;
             }
 
-            // The manifest, with the icons of the colors this browser chose when it has chosen (`http/icon-route.ts`).
-            if (
-                parts.length === 1 &&
-                parts[0] === "manifest.webmanifest" &&
-                request.method === "GET"
-            ) {
-                const body = manifestFor(
-                    request,
-                    readFileSync(join(WEB, "manifest.webmanifest"), "utf8"),
-                    app.dataDir,
-                );
-
-                if (body !== null) {
-                    response.writeHead(200, {
-                        "content-type": "application/manifest+json",
-                        "cache-control": "no-cache",
-                    });
-
-                    return void response.end(body);
-                }
+            // The manifest for this mount, with the icons of the colors this browser chose when it has chosen
+            // (`http/icon-route.ts`).
+            if (parts.length === 1 && parts[0] === "manifest.webmanifest") {
+                return serveManifest(request, response, app.basePath, app.dataDir);
             }
 
             if (parts[0] === "vendor" && parts[1] === "katex.css" && parts.length === 2) {
@@ -190,12 +183,12 @@ export function createHandler(options: HttpOptions) {
             // Shares from other apps go to the service worker (web/sw.js). One that reaches the server came before the
             // worker was installed on this device; nothing here knows where it should go.
             if (parts[0] === "share" && request.method === "POST") {
-                return sharePage(response);
+                return sharePage(response, app.basePath);
             }
 
             // The web app: index.html for app routes, files from web/ otherwise.
             if (parts.length === 0 || parts[0] === "s") {
-                return serveApp(response, iconAddress(request, app.dataDir));
+                return serveApp(response, app.basePath, iconAddress(request, app.dataDir, app.basePath));
             }
 
             const file = normalize(join(WEB, ...parts));
@@ -205,7 +198,7 @@ export function createHandler(options: HttpOptions) {
             }
 
             if (file === join(WEB, "index.html")) {
-                return serveApp(response, iconAddress(request, app.dataDir));
+                return serveApp(response, app.basePath, iconAddress(request, app.dataDir, app.basePath));
             }
 
             return await serveFile(request, response, file);

@@ -1090,7 +1090,7 @@ export class Watches {
             .push(ended.by, id, "done", {
                 title,
                 body: `${snippet(ended.title, 100)}: ${endedText(ended)}`,
-                url: `/s/${String(id)}`,
+                url: this.#app.url(`/s/${String(id)}`),
                 tag: `watch-${String(id)}`,
             })
             .catch((error: unknown) => app.log(`push failed: ${describe(error)}`));

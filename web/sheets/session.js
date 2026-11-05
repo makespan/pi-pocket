@@ -1,3 +1,4 @@
+import { appUrl } from "../base-path.js";
 import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import { sessionActions } from "../extension-ui.js";
 import { deselectInList, selectedInList, selectFromList, setArchived } from "../sessions.js";
@@ -17,7 +18,7 @@ import {
 import { isPinned, movePin, togglePin } from "../theme.js";
 import { copyText, html, item, scrimPress, Sheet } from "../ui.js";
 
-const linkOf = (id) => `${location.origin}/s/${id}`;
+const linkOf = (id) => `${location.origin}${appUrl(`/s/${id}`)}`;
 
 const copy = (text, what) =>
     copyText(text).then(
