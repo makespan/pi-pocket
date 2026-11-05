@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ConfigStore, Role, User } from "./config.ts";
+import type { ExternalAuth } from "./auth-provider.ts";
+import { HttpError } from "./errors.ts";
 
 export const COOKIE = "pocket_auth";
 
@@ -86,12 +88,22 @@ export type InviteGrant =
 /** Invites live in `config.json` (by their codes' hashes), so one that lasts a day or a week outlives a restart. */
 export class Auth {
     readonly #config: ConfigStore;
+    readonly #external: ExternalAuth | undefined;
 
-    constructor(config: ConfigStore) {
+    constructor(config: ConfigStore, external?: ExternalAuth) {
         this.#config = config;
+        this.#external = external;
+    }
+
+    get external(): boolean {
+        return this.#external !== undefined;
     }
 
     user(request: IncomingMessage): User | undefined {
+        if (this.#external !== undefined) {
+            return this.#external.user(request, this.#config);
+        }
+
         const token = parseCookies(request.headers.cookie)[COOKIE];
 
         if (token === undefined || token === "") {
@@ -108,7 +120,7 @@ export class Auth {
     }
 
     tokenUser(token: string): User | undefined {
-        return this.#config.userByToken(token);
+        return this.external ? undefined : this.#config.userByToken(token);
     }
 
     /** A new invite that lasts `minutes`; an owner invite always lasts 15, the least. */
@@ -117,6 +129,10 @@ export class Auth {
         grant: InviteGrant = { role: "guest" },
         minutes: InviteMinutes = 15,
     ): { code: string; expiresAt: number; minutes: InviteMinutes } {
+        if (this.external) {
+            throw new HttpError(403, "Pairing is disabled by external authentication");
+        }
+
         // Unambiguous characters, easy to type on a phone.
         const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
         const bytes = randomBytes(10);
@@ -143,6 +159,10 @@ export class Auth {
 
     /** The grant of a live invite, or undefined when it expired or was used. */
     invite(code: string): InviteGrant | undefined {
+        if (this.external) {
+            return undefined;
+        }
+
         const invite = this.#config.invite(code);
 
         if (invite === undefined) {
@@ -163,6 +183,10 @@ export class Auth {
      * no one new: the device gets the owner and the owner's token. Either way the invite is gone, used or not.
      */
     redeem(code: string, name: string): { user: User; token: string } | undefined {
+        if (this.external) {
+            return undefined;
+        }
+
         const invite = this.#config.invite(code);
 
         if (invite === undefined || !this.#config.removeInvite(code)) {

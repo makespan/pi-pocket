@@ -365,6 +365,8 @@ export interface OpenOptions {
 }
 
 export class PocketApp {
+    /** Set by the startup HTTP boundary, not an optional extension setting. */
+    authenticationMode: "pairing" | "external" = "pairing";
     readonly config: ConfigStore;
     /** Push subscriptions and their keys; undefined until the server opened. */
     pushStore: PushStore | undefined;
@@ -2599,6 +2601,7 @@ export class PocketApp {
             guard: await this.guardStatus(),
             server: {
                 pocketVersion: pocketVersion(),
+                authenticationMode: this.authenticationMode,
                 supervised: this.supervised,
                 startedAt: this.startedAt,
                 home: homedir(),

@@ -428,7 +428,8 @@ function PeopleList() {
 }
 
 export function PeopleSheet() {
-    const canInvite = canSteer() && !scoped();
+    const canInvite =
+        store.state.server?.authenticationMode !== "external" && canSteer() && !scoped();
 
     return html`<${Sheet} title="People" onClose=${closeSheet}>
         ${

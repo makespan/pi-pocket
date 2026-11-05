@@ -140,13 +140,20 @@ export function createApi(options: HttpOptions, auth: Auth) {
         const method = request.method ?? "GET";
         const user = requireUser(request);
 
-        noteTunnel(request, user);
+        if (!auth.external) {
+            noteTunnel(request, user);
+        }
 
         if (method !== "GET" && request.headers["x-pocket"] !== "1") {
             throw new HttpError(403, "Missing X-Pocket header");
         }
 
         const [first, second, third, fourth] = parts;
+
+        if (auth.external && (first === "invite" || first === "logout")) {
+            throw new HttpError(403, "Pairing is disabled by external authentication");
+        }
+
         const route: ApiRequest = { app, request, response, url, user };
 
         if (first === "events" && method === "GET") {

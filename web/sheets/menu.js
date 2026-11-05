@@ -580,7 +580,7 @@ export function MenuSheet({ places = true }) {
                     "running work resumes",
                 )
             }
-            ${item(html`<span class="menu-signout">Sign out</span>`, signOut)}
+            ${server?.authenticationMode !== "external" && item(html`<span class="menu-signout">Sign out</span>`, signOut)}
         </div>
         ${
             embedder.items.length > 0 &&

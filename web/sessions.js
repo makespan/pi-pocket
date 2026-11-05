@@ -2890,7 +2890,7 @@ function Rail({ foldable = false, folded = false }) {
                 ? html`<button
                     class="rail-button"
                     data-part="rail-button"
-                    title=${canStart ? "People and invites" : "People"}
+                    title=${canStart && store.state.server?.authenticationMode !== "external" ? "People and invites" : "People"}
                     aria-label="People"
                     onClick=${() => openSheet({ type: "people" })}
                 >

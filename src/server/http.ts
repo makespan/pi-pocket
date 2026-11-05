@@ -32,14 +32,17 @@ import { themeFile } from "./http/theme-routes.ts";
 const BRIDGE_VERSION = 1;
 
 export function createHandler(options: HttpOptions) {
-    const { app } = options;
-    const auth = new Auth(app.config);
+    const { app, externalAuth } = options;
+    const auth = new Auth(app.config, externalAuth);
+
+    app.authenticationMode = auth.external ? "external" : "pairing";
     const api = createApi(options, auth);
 
     return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
         const url = new URL(request.url ?? "/", "http://pocket.local");
 
         try {
+            await externalAuth?.admit(request, app.config);
             let path: string;
 
             try {
@@ -51,6 +54,10 @@ export function createHandler(options: HttpOptions) {
             const parts = path.split("/").filter((part) => part !== "");
 
             response.setHeader("x-content-type-options", "nosniff");
+
+            if (auth.external && (parts[0] === "login" || parts[0] === "join")) {
+                throw new HttpError(403, "Pairing is disabled by external authentication");
+            }
 
             // What an embedder (an app that shows Pi Pocket) asks before it signs in: that this is
             // Pi Pocket, and which version of the app bridge its page speaks (`web/host.js`,

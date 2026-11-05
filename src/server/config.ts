@@ -88,6 +88,8 @@ interface PocketConfig {
     users: User[];
     /** Invites not yet used: kept here so one that lasts a day or a week outlives a restart. */
     invites?: StoredInvite[];
+    /** Permanent external identity bindings. A missing user is a tombstone, never automatic readmission. */
+    externalBindings?: { provider: string; subject: string; userId: string; owner: boolean }[];
     lastModel?: ModelChoice;
     /** The model and thinking level new sessions start with, as the owner chose; absent: the last one picked. */
     defaultModel?: ModelChoice;
@@ -383,6 +385,56 @@ export class ConfigStore {
         this.save();
 
         return { user, token };
+    }
+
+    /** Bind once, in the same atomic config save as user creation; keep deleted users' bindings as tombstones. */
+    externalUser(
+        provider: string,
+        subject: string,
+        owner: boolean,
+        name?: string,
+    ): User | undefined {
+        const bindings = this.#config.externalBindings ?? [];
+        const binding = bindings.find(
+            (each) => each.provider === provider && each.subject === subject,
+        );
+
+        if (binding !== undefined) {
+            // A changed owner mapping cannot elevate a former guest or let a former owner in as a guest.
+            return binding.owner === owner ? this.userById(binding.userId) : undefined;
+        }
+
+        // One bootstrap owner identity per provider. Replacing it requires explicit offline administration.
+        if (owner && bindings.some((each) => each.provider === provider && each.owner)) {
+            return undefined;
+        }
+
+        const user: User | undefined = owner
+            ? this.#config.users.find((each) => each.role === "owner")
+            : {
+                  id: randomUUID(),
+                  name: name?.replace(/\s+/g, " ").trim().slice(0, 40) || subject.slice(0, 40),
+                  role: "guest",
+                  // No recoverable bearer for external guests, and no token a native login can match.
+                  tokenHash: "",
+                  createdAt: Date.now(),
+              };
+
+        if (user === undefined) {
+            return undefined;
+        }
+
+        if (!owner) {
+            this.#config.users.push(user);
+        }
+
+        this.#config.externalBindings = [
+            ...bindings,
+            { provider, subject, userId: user.id, owner },
+        ];
+        this.save();
+
+        return user;
     }
 
     updateUser(

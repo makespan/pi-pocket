@@ -485,7 +485,8 @@ function actionItems() {
         { label: "Spend", icon: "pulse", run: () => openSheet({ type: "spend" }) },
         collab()
             ? {
-                  label: "People and invites",
+                  label:
+                      server?.authenticationMode === "external" ? "People" : "People and invites",
                   icon: "users",
                   run: () => openSheet({ type: "people" }),
               }
@@ -517,7 +518,12 @@ function actionItems() {
                         notify("info", "Restarting. Running work continues after the restart.");
                     }),
             },
-        { label: "Sign out", detail: "this browser", icon: "logout", run: signOut },
+        server?.authenticationMode !== "external" && {
+            label: "Sign out",
+            detail: "this browser",
+            icon: "logout",
+            run: signOut,
+        },
         // What extensions' browser modules added (`extension-ui.js`).
         ...extensionLauncherItems(),
         // Last: a list that is cut keeps the actions above, however many favorites there are (up to 100).

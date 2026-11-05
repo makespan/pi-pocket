@@ -14,6 +14,7 @@ import { join, resolve } from "node:path";
 // Only types from the app here: its modules load below, after the signal handlers (loading takes a moment).
 import type { AccessInfo, PocketApp } from "./app.ts";
 import { APP_ROOT, dataDir } from "./config.ts";
+import { loadExternalAuth } from "./auth-provider.ts";
 import type { createHandler } from "./http.ts";
 import { restoreMissingNpmPackage } from "./update-state.ts";
 
@@ -89,6 +90,16 @@ function parseArgs(argv: string[]) {
 }
 
 const options = parseArgs(process.argv.slice(2));
+// Required authentication initializes before binding a port, even before the starting response is available.
+const externalAuth = await loadExternalAuth(process.env.PI_POCKET_AUTH_CONFIG).catch(() => {
+    console.error("Could not initialize required external authentication provider.");
+    process.exit(CONFIG_ERROR_CODE);
+});
+
+if (externalAuth !== undefined && options.rotateToken) {
+    console.error("--rotate-token is unavailable with external authentication.");
+    process.exit(CONFIG_ERROR_CODE);
+}
 
 process.env.PI_POCKET_DIR = options.data;
 // The data folder holds the database, sign-in tokens, push keys, and uploads: only this user may open it, also when
@@ -224,6 +235,7 @@ if (options.rotateToken) {
 
 handle = makeHandler({
     app: opened,
+    externalAuth,
     listen: { host: options.host, port: options.port },
     restart: () => void stop(RESTART_CODE),
 });
@@ -258,8 +270,11 @@ if (launcher) {
         type: "ready",
         host: options.host,
         port: options.port,
-        loginPath: `/login?token=${token}`,
+        loginPath: externalAuth === undefined ? `/login?token=${token}` : undefined,
+        externalAuth: externalAuth !== undefined,
     });
+} else if (externalAuth !== undefined) {
+    console.log("\nPi Pocket is running. External authentication required; pairing is disabled.\n");
 } else {
     const hosts = new Set<string>([
         options.host === "0.0.0.0" || options.host === "::" ? "127.0.0.1" : options.host,
