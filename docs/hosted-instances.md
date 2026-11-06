@@ -3,13 +3,13 @@
 This fork combines [base-path routing](base-path.md) with [external authentication](external-auth.md). It keeps Pi Pocket's UI and Pi Durable, and keeps each instance under a different Unix user. It is **not** a multi-tenant server or a sandbox for mutually untrusted guests. **Use this shared origin only if every owner, guest and browser extension on every instance is trusted by all the others.** A script on one instance can act with a visitor's privileges on another, including owner privileges; separate Unix accounts and per-instance proxy secrets cannot prevent that browser-level access.
 
 ```text
-https://pocket.<tailnet>.ts.net/alice.name/
-    → Tailscale Serve → protected routing gateway → /run/pi-pocket/alice.name/pocket.sock → Alice's instance
-https://pocket.<tailnet>.ts.net/bob.name/
-    → the same gateway                         → /run/pi-pocket/bob.name/pocket.sock   → Bob's instance
+https://<host>.<tailnet>.ts.net/alice.name/
+    → Tailscale Serve (node, :443) → /run/caddy-front/pocket.sock → Caddy → /run/pi-pocket/alice.name/pocket.sock → Alice
+https://<host>.<tailnet>.ts.net/bob.name/
+    → the same Serve and Caddy                                          → /run/pi-pocket/bob.name/pocket.sock   → Bob
 ```
 
-One `tailscaled` HTTPS endpoint and one routing gateway serve all instances. Each instance listens on its own Unix socket, not a TCP port. A verified person is the owner on their instance and a native guest on another only when that instance explicitly allowlists them. Guest admission grants steering and initially all-session access; agents execute commands as that instance's Unix user. People controls still manage viewer downgrades, session grants, budgets and removal.
+One `tailscaled` HTTPS endpoint (the node's own name) and one routing gateway serve all instances. Each instance listens on its own Unix socket, not a TCP port. A verified person is the owner on their instance and a native guest on another only when that instance explicitly allowlists them. Guest admission grants steering and initially all-session access; agents execute commands as that instance's Unix user. People controls still manage viewer downgrades, session grants, budgets and removal.
 
 ## Per-instance configuration
 
@@ -39,7 +39,7 @@ For Alice, write an owner-only `0600` configuration file and a separate per-inst
     },
     "owner": "alice@example.com",
     "guests": ["bob@example.com"],
-    "origin": "https://pocket.<tailnet>.ts.net"
+    "origin": "https://<host>.<tailnet>.ts.net"
 }
 ```
 
@@ -57,9 +57,74 @@ The launcher's panel says to use the authenticated gateway: it prints no `http:/
 
 ## Protect the gateway ingress first
 
-Serve strips client-supplied identity headers and supplies the authenticated human's login. Pocket's provider also authenticates the gateway with a distinct secret for each instance. **Both boundaries matter:** an unprivileged local process must not reach the gateway and ask it to add a valid secret to a forged login. The backend sockets keep other users from receiving that secret; the gateway's own ingress still listens on a TCP port that Serve connects to, and needs its own protection.
+Serve strips client-supplied identity headers and supplies the authenticated human's login. Pocket's provider also authenticates the gateway with a distinct secret for each instance. **Both boundaries matter:** an unprivileged local process must not reach the gateway and ask it to add a valid secret to a forged login. The backend sockets keep other users from receiving that secret; the gateway's own ingress needs the same protection.
 
-A namespace-contained gateway is described in [Tailscale authentication](tailscale-auth.md). Another arrangement, when the host's `tailscaled` runs as UID 0, is a dedicated loopback gateway port protected by an administrator-owned UID firewall. For example, these rules protect port `880` for IPv4 and IPv6:
+The arrangement here puts Serve in front of Caddy on a Unix socket too, so no TCP port is involved anywhere on the host. Serve runs on the node itself (Tailscale **1.104.4 or later**, which fixes TS-2026-016 and TS-2026-017):
+
+```sh
+sudo tailscale serve --bg --https=443 unix:/run/caddy-front/pocket.sock
+```
+
+Mounted at `/`, Serve keeps the `/<user>/` prefixes. It strips client-supplied `Tailscale-User-*` and `Tailscale-App-Capabilities` headers, sets the verified login, sets `X-Forwarded-Host`, `X-Forwarded-Proto` and `X-Forwarded-For`, and sends `Host: localhost` to a Unix target. Pocket builds its links from `X-Forwarded-Host`, and in external mode checks Origin against its configured origin, never against Host. Do not reset or replace unrelated Serve routes, and never enable Funnel for this one.
+
+The administrator makes the ingress folder so that only Caddy and root can reach its socket (Caddy cannot set the socket's group itself; the setgid folder gives it `root`), and keeps Caddy's admin socket private:
+
+```text
+d /run/caddy-front 2750 caddy root  -
+d /run/caddy       0700 caddy caddy -
+```
+
+Allow tailnet access in the tailnet policy, outside this repository: grant only the developers' group (for example `"src": ["group:developers@example.com"]`) to this node's `tcp:443`.
+
+## Route without stripping the prefix
+
+Caddy (2.11 or later) routes each fixed prefix to its instance's socket. Each instance's gateway secret is a file in `/etc/caddy/pocket-secrets/` (folder `0750`, files `0640`, owned by root with group `caddy`, readable by no other account), read by `{file.…}` when a request is proxied; since Caddy 2.8.5 it drops the file's trailing newline.
+
+```text
+{
+    # Not localhost:2019, where any local user could read the configuration and replace the routes.
+    admin unix//run/caddy/admin.sock
+    servers {
+        # Keep Serve's X-Forwarded-* headers, which arrive on the ingress socket.
+        trusted_proxies_unix
+    }
+}
+
+http://localhost {
+    bind unix//run/caddy-front/pocket.sock|0660
+    # No `log` directive: Caddy writes no access log. Never log request headers here.
+
+    redir /alice.name /alice.name/ 308
+    handle /alice.name/* {
+        reverse_proxy unix//run/pi-pocket/alice.name/pocket.sock {
+            header_up X-Pocket-Gateway-Secret {file./etc/caddy/pocket-secrets/alice.name}
+            flush_interval -1
+        }
+    }
+
+    redir /bob.name /bob.name/ 308
+    handle /bob.name/* {
+        reverse_proxy unix//run/pi-pocket/bob.name/pocket.sock {
+            header_up X-Pocket-Gateway-Secret {file./etc/caddy/pocket-secrets/bob.name}
+            flush_interval -1
+        }
+    }
+
+    handle {
+        respond 404
+    }
+}
+```
+
+Use `handle`, **not** `handle_path`: `handle_path` strips the prefix, and the backend must receive `/alice.name/...`, not `/...`. Caddy passes incoming headers through by default, so the `header_up` line must **overwrite** `X-Pocket-Gateway-Secret` on every route; never forward a caller-supplied one. A missing or empty secret file sends an empty value, which Pocket denies. The identity headers come only from Serve, which strips the client's own. `flush_interval -1` sends SSE without buffering; Caddy sets no proxy read timeout, so long polls stay open. Pocket refuses every forwarded path outside its own mount, so a request whose path Caddy matches to one route but spells another prefix fails closed. Caddy's process (group `caddy`) reaches each instance socket through the folder's group; no other account can.
+
+Never trust a forwarded-prefix header or route identity/secret selection from arbitrary request parameters. Preserve Origin as received; do not make hostile cross-origin requests look same-origin. Do not add shared response caches or authentication exceptions for static files, SSE, polling, artifacts or webhooks.
+
+Opening the public prefixed address signs in through the external identity; no owner-token links, QR or invite code is needed. Tagged clients without a human login are denied.
+
+## Alternative: nginx on a protected loopback port
+
+A namespace-contained gateway is described in [Tailscale authentication](tailscale-auth.md). Another arrangement, when the host's `tailscaled` runs as UID 0, is a dedicated loopback gateway port protected by an administrator-owned UID firewall, with Serve forwarding to `http://127.0.0.1:880`. For example, these rules protect port `880` for IPv4 and IPv6:
 
 ```nft
  table inet pocket_gateway {
@@ -76,69 +141,14 @@ A namespace-contained gateway is described in [Tailscale authentication](tailsca
 
 This is a deployment example, not an automatically installed firewall. Validate and integrate it with the host's existing rules; load the protection **before** starting the listener and require it in gateway service dependencies. Keep it persistent across restarts. Confirm the actual tailscaled UID before relying on it. Root and its processes are trusted. An unprivileged account must not have capabilities or networking/proxy paths that bypass these rules. Never open this gateway port to the tailnet or public network, and never enable Funnel for it.
 
-The firewall stops other users from **connecting** to the gateway port, not from **binding** it while the gateway restarts, which would let them answer Serve's traffic on the shared origin. So the gateway listens on a port below 1024 (`880` here): on Linux only root, or a process with `CAP_NET_BIND_SERVICE` such as the Caddy service, can bind one. Keep `net.ipv4.ip_unprivileged_port_start` at its default `1024`.
+The firewall stops other users from **connecting** to the gateway port, not from **binding** it while the gateway restarts, which would let them answer Serve's traffic on the shared origin. So the gateway listens on a port below 1024 (`880` here): on Linux only root, or a process with `CAP_NET_BIND_SERVICE`, can bind one. Keep `net.ipv4.ip_unprivileged_port_start` at its default `1024`.
 
-## Route without stripping the prefix
-
-A Caddy gateway inside that protected boundary uses fixed per-user routes. Replace the example DNS name. Each secret comes from a root-only environment file that the Caddy service loads (for example `EnvironmentFile=/etc/caddy/pocket-secrets.env`, mode `0600`, owned by root), holding `POCKET_SECRET_ALICE_NAME=<Alice's gateway secret>` and one line for each other instance. `{env.…}` reads it when Caddy runs, so the secret is not written into Caddy's configuration.
-
-```text
-{
-    # The admin API listens on localhost:2019 by default: any local user could read
-    # this configuration and replace the routes. Turn it off, or move it to a root-only socket.
-    admin off
-    # Serve terminates TLS; this listener is plain HTTP on the protected port.
-    auto_https off
-}
-
-http://:880 {
-    bind 127.0.0.1
-    # No `log` directive: Caddy writes no access log. Never log request headers here.
-
-    redir /alice.name /alice.name/ 308
-    handle /alice.name/* {
-        reverse_proxy unix//run/pi-pocket/alice.name/pocket.sock {
-            header_up Host pocket.<tailnet>.ts.net
-            header_up X-Forwarded-Host pocket.<tailnet>.ts.net
-            header_up X-Forwarded-Proto https
-            header_up Tailscale-User-Login {http.request.header.Tailscale-User-Login}
-            header_up -Tailscale-User-Name
-            header_up X-Pocket-Gateway-Secret {env.POCKET_SECRET_ALICE_NAME}
-            flush_interval -1
-        }
-    }
-
-    redir /bob.name /bob.name/ 308
-    handle /bob.name/* {
-        reverse_proxy unix//run/pi-pocket/bob.name/pocket.sock {
-            header_up Host pocket.<tailnet>.ts.net
-            header_up X-Forwarded-Host pocket.<tailnet>.ts.net
-            header_up X-Forwarded-Proto https
-            header_up Tailscale-User-Login {http.request.header.Tailscale-User-Login}
-            header_up -Tailscale-User-Name
-            header_up X-Pocket-Gateway-Secret {env.POCKET_SECRET_BOB_NAME}
-            flush_interval -1
-        }
-    }
-
-    handle {
-        respond 404
-    }
-}
-```
-
-Use `handle`, **not** `handle_path`: `handle_path` strips the prefix, and the backend must receive `/alice.name/...`, not `/...`. `header_up` replaces a caller-supplied `X-Pocket-Gateway-Secret` or identity header; a missing secret variable sends an empty value, which Pocket denies. `flush_interval -1` sends SSE without buffering; Caddy sets no proxy read timeout, so long polls stay open. Pocket refuses every forwarded path outside its own mount, so a request whose path Caddy matches to one route but spells another prefix fails closed. Caddy's process (group `caddy`) reaches each socket through the folder's group; no other account can.
-
-Never trust a forwarded-prefix header or route identity/secret selection from arbitrary request parameters. Preserve Origin as received; do not make hostile cross-origin requests look same-origin. Do not add shared response caches or authentication exceptions for static files, SSE, polling, artifacts or webhooks.
-
-### nginx instead
-
-nginx works the same way with fixed `location` blocks. The root-owned secret include must contain `proxy_set_header X-Pocket-Gateway-Secret "<that instance's random secret>";` and must never be readable by other Unix users. Give the socket folders nginx's group instead of `caddy`.
+nginx then uses fixed `location` blocks to the same instance sockets. The root-owned secret include must contain `proxy_set_header X-Pocket-Gateway-Secret "<that instance's random secret>";` and must never be readable by other Unix users. Give the instance socket folders nginx's group instead of `caddy`.
 
 ```nginx
 server {
     listen 127.0.0.1:880;
-    server_name pocket.<tailnet>.ts.net;
+    server_name <host>.<tailnet>.ts.net;
     access_log off;
 
     proxy_http_version 1.1;
@@ -167,8 +177,8 @@ The root-owned `common-headers.conf` holds the six shared headers:
 
 ```nginx
 proxy_set_header Connection "";
-proxy_set_header Host pocket.<tailnet>.ts.net;
-proxy_set_header X-Forwarded-Host pocket.<tailnet>.ts.net;
+proxy_set_header Host <host>.<tailnet>.ts.net;
+proxy_set_header X-Forwarded-Host <host>.<tailnet>.ts.net;
 proxy_set_header X-Forwarded-Proto https;
 proxy_set_header Tailscale-User-Login $http_tailscale_user_login;
 proxy_set_header Tailscale-User-Name "";
@@ -176,15 +186,15 @@ proxy_set_header Tailscale-User-Name "";
 
 Each location sets its own secret, and nginx inherits `proxy_set_header` only where a level sets none, so do not omit the common include. The `proxy_pass` targets have **no URI part** after the socket path: nginx then passes `/alice.name/...` unchanged.
 
-Configure the existing Tailscale HTTPS endpoint to forward to the gateway, `http://127.0.0.1:880`. Do not reset or replace unrelated Serve routes. Opening the public prefixed address signs in through the external identity; no owner-token links, QR or invite code is needed. Tagged clients without a human login are denied.
-
 ## Validate before rollout
 
-- From a different unprivileged Unix account, the gateway port is unreachable, and direct backend requests with forged identity headers but no valid gateway secret are denied.
-- No instance listens on TCP: `ss -ltnp` (as root) shows no Pocket backend port; the gateway's only listener is `127.0.0.1:880`, and `sysctl net.ipv4.ip_unprivileged_port_start` is `1024`.
+- `tailscale version` is 1.104.4 or later, and `tailscale serve status` shows only the intended `https://<host>.<tailnet>.ts.net` → `unix:/run/caddy-front/pocket.sock` route, with no Funnel.
+- From a different unprivileged Unix account, the gateway ingress is unreachable (`curl --unix-socket /run/caddy-front/pocket.sock http://localhost/alice.name/` is refused, as is the admin socket), and direct backend requests with forged identity headers but no valid gateway secret are denied.
+- No instance listens on TCP: `ss -ltnp` (as root) shows no Pocket backend port and no Caddy port. With the nginx alternative, the gateway's only listener is `127.0.0.1:880`, and `sysctl net.ipv4.ip_unprivileged_port_start` is `1024`.
+- `/etc/caddy/pocket-secrets/*` are readable only by root and group `caddy`, and a request that carries its own `X-Pocket-Gateway-Secret` through Serve does not reach any instance with it.
 - `ls -ld /run/pi-pocket /run/pi-pocket/*` shows a root-owned `0755` parent and per-user folders `drwxr-s---` owned by each instance user with the gateway's group; each `pocket.sock` is `srw-rw----` with that user and group. Another unprivileged account can neither create a file in a socket folder nor connect to a socket (`curl --unix-socket /run/pi-pocket/alice.name/pocket.sock http://x/alice.name/` is refused).
 - Restarting an instance (Menu → Restart server, or its service) brings it back on the same socket; during the restart no other account can take its place. A copy of a socket folder made group-writable, or replaced by a symlink, makes Pocket refuse to start with exit code 78.
-- The gateway's admin interface is off or root-only (with Caddy, `curl http://localhost:2019/config/` fails for every account).
+- The gateway's admin interface is not on a TCP port (with Caddy, `curl http://localhost:2019/config/` fails for every account) and its socket folder is private to the gateway.
 - Forged identity headers sent through Serve do not override the real human identity. Missing, tagged and unlisted identities are denied.
 - The same human is owner on their instance and guest/viewer on another, never the other instance's owner. Native permissions, viewer downgrade, budget/session changes and removal persist across restart.
 - Both prefixes load assets, SSE/poll, deep links, artifacts, themes and extensions. PWA install/share/notification URLs and browser state stay associated with the correct instance.
