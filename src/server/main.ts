@@ -2,12 +2,21 @@
 /**
  * Pi Pocket server. Run it through `bin/pi-pocket.js`, which restarts it when the app asks to (exit code 75).
  *
- *   node bin/pi-pocket.js [--host 127.0.0.1] [--port 8787] [--cwd DIR] [--data DIR] [--base-path PATH] [--rotate-token]
+ *   node bin/pi-pocket.js [--host 127.0.0.1] [--port 8787 | --socket PATH] [--cwd DIR] [--data DIR] [--base-path PATH]
+ *       [--rotate-token]
  *
  * Under the launcher (PI_POCKET_LAUNCHER=1 with an IPC channel) the server reports `ready` instead of printing its
  * sign-in links, and takes `access` messages that say how other devices reach it (a tunnel's public URL).
  */
 import { parseBasePath } from "../base-path.ts";
+import {
+    claimSocket,
+    type OwnSocket,
+    parseSocketPath,
+    prepareSocketPath,
+    releaseSocket,
+    SocketPathError,
+} from "../socket-path.ts";
 import { chmodSync, mkdirSync } from "node:fs";
 import { createServer } from "node:http";
 import { networkInterfaces } from "node:os";
@@ -35,11 +44,13 @@ function parseArgs(argv: string[]) {
         basePath: process.env.PI_POCKET_BASE_PATH ?? "",
         host: process.env.PI_POCKET_HOST ?? "127.0.0.1",
         port: Number(process.env.PI_POCKET_PORT ?? 8787),
+        socket: process.env.PI_POCKET_SOCKET as string | undefined,
         cwd: process.cwd(),
         data: dataDir(),
         rotateToken: false,
         keepAliveSeconds: Number(process.env.PI_POCKET_KEEPALIVE_SECONDS?.trim() || 5),
     };
+    let tcpFlag = false;
 
     for (let index = 0; index < argv.length; index++) {
         const arg = argv[index]!;
@@ -56,8 +67,12 @@ function parseArgs(argv: string[]) {
 
         if (arg === "--host") {
             options.host = value();
+            tcpFlag = true;
         } else if (arg === "--port" || arg === "-p") {
             options.port = Number(value());
+            tcpFlag = true;
+        } else if (arg === "--socket") {
+            options.socket = value();
         } else if (arg === "--base-path") {
             options.basePath = value();
         } else if (arg === "--cwd") {
@@ -68,7 +83,7 @@ function parseArgs(argv: string[]) {
             options.rotateToken = true;
         } else if (arg === "--help" || arg === "-h") {
             console.log(
-                "pi-pocket [--host 127.0.0.1] [--port 8787] [--cwd DIR] [--data DIR] [--base-path PATH] [--rotate-token]",
+                "pi-pocket [--host 127.0.0.1] [--port 8787 | --socket PATH] [--cwd DIR] [--data DIR] [--base-path PATH] [--rotate-token]",
             );
             process.exit(0);
         } else {
@@ -91,6 +106,11 @@ function parseArgs(argv: string[]) {
     }
 
     options.basePath = parseBasePath(options.basePath);
+    options.socket = parseSocketPath(options.socket);
+
+    if (options.socket !== undefined && tcpFlag) {
+        throw new Error("--socket cannot be combined with --host or --port");
+    }
 
     return options;
 }
@@ -120,6 +140,9 @@ let app: PocketApp | undefined;
 
 let stopWatching = () => {};
 
+/** The Unix socket this process listens on, if any (`--socket`). */
+let ownSocket: OwnSocket | undefined;
+
 let stopping = false;
 /** A stop asked for while starting, done once the start finishes. */
 let stopWhenStarted: number | undefined;
@@ -139,6 +162,7 @@ const stop = async (code: number) => {
     stopWatching();
     server.close();
     server.closeAllConnections();
+    releaseSocket(ownSocket);
 
     try {
         // A tool or model stream that ignores its abort must not hold a restart (and the phone's only way in) forever.
@@ -196,23 +220,45 @@ server.headersTimeout = 60_000;
 // The timeouts above count from a request's first byte, not from the idle time before it.
 server.keepAliveTimeout = options.keepAliveSeconds * 1000;
 
-// Take the port before opening the database: opening resumes interrupted work, which must not start in a process
-// that then exits because it cannot serve.
+// Take the port (or socket) before opening the database: opening resumes interrupted work, which must not start in a
+// process that then exits because it cannot serve.
 try {
+    if (options.socket !== undefined) {
+        await prepareSocketPath(options.socket);
+    }
+
     await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
-        server.listen(options.port, options.host, () => {
+
+        const listening = () => {
             server.off("error", reject);
             resolve();
-        });
+        };
+
+        if (options.socket === undefined) {
+            server.listen(options.port, options.host, listening);
+        } else {
+            server.listen(options.socket, listening);
+        }
     });
+
+    if (options.socket !== undefined) {
+        ownSocket = claimSocket(options.socket);
+    }
 } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
 
+    server.close();
     console.error(
-        code === "EADDRINUSE"
-            ? `Port ${options.port} is already in use on ${options.host}. Is Pi Pocket already running? Pick another with --port.`
-            : `Could not listen on ${options.host}:${options.port}: ${(error as Error).message}`,
+        error instanceof SocketPathError
+            ? error.message
+            : options.socket !== undefined
+              ? code === "EADDRINUSE"
+                  ? `Socket ${options.socket} is already in use. Is Pi Pocket already running?`
+                  : `Could not listen on ${options.socket}: ${(error as Error).message}`
+              : code === "EADDRINUSE"
+                ? `Port ${options.port} is already in use on ${options.host}. Is Pi Pocket already running? Pick another with --port.`
+                : `Could not listen on ${options.host}:${options.port}: ${(error as Error).message}`,
     );
     process.exit(CONFIG_ERROR_CODE);
 }
@@ -243,7 +289,10 @@ if (options.rotateToken) {
 handle = makeHandler({
     app: opened,
     externalAuth,
-    listen: { host: options.host, port: options.port },
+    listen:
+        options.socket === undefined
+            ? { host: options.host, port: options.port }
+            : { socket: options.socket },
     restart: () => void stop(RESTART_CODE),
 });
 stopWatching = (() => {
@@ -275,13 +324,24 @@ await opened.updates.recover().catch((error: unknown) => {
 if (launcher) {
     process.send?.({
         type: "ready",
-        host: options.host,
-        port: options.port,
+        ...(options.socket === undefined
+            ? { host: options.host, port: options.port }
+            : { socket: options.socket }),
         loginPath: externalAuth === undefined ? opened.url(`/login?token=${token}`) : undefined,
         externalAuth: externalAuth !== undefined,
     });
 } else if (externalAuth !== undefined) {
     console.log("\nPi Pocket is running. External authentication required; pairing is disabled.\n");
+} else if (options.socket !== undefined) {
+    // No http link reaches a Unix socket: the owner opens the path on the gateway's public address.
+    console.log(`\nPi Pocket is running on the Unix socket ${options.socket}.`);
+    console.log(`  data:     ${options.data}`);
+    console.log(`  sessions: new sessions start in ${options.cwd}`);
+    console.log(
+        "  Open this path once per browser on your gateway's address to sign in as the owner (keep it private):",
+    );
+    console.log(`    ${opened.url(`/login?token=${token}`)}`);
+    console.log("  Other devices: open the app's menu and use “Sign in another device”.\n");
 } else {
     const hosts = new Set<string>([
         options.host === "0.0.0.0" || options.host === "::" ? "127.0.0.1" : options.host,

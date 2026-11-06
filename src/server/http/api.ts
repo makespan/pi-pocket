@@ -617,7 +617,12 @@ export function createApi(options: HttpOptions, auth: Auth) {
             app.requireSee(user, id);
 
             if (third === "browser") {
-                return browserRoutes(route, id, fourth, options.listen.port);
+                return browserRoutes(
+                    route,
+                    id,
+                    fourth,
+                    "port" in options.listen ? options.listen.port : undefined,
+                );
             }
 
             return conversationRoutes(route, id, parts);
@@ -961,10 +966,11 @@ export function createApi(options: HttpOptions, auth: Auth) {
             const loopback = /^https?:\/\/(localhost|127\.\d+\.\d+\.\d+|\[::1\])(:\d+)?$/.test(
                 here,
             );
-            const wildcard = options.listen.host === "0.0.0.0" || options.listen.host === "::";
+            const { listen } = options;
+            // A Unix socket has no address of its own: the gateway's public address (here) is the way in.
             const lan =
-                loopback && wildcard
-                    ? lanAddresses().map((address) => `http://${address}:${options.listen.port}`)
+                "port" in listen && loopback && (listen.host === "0.0.0.0" || listen.host === "::")
+                    ? lanAddresses().map((address) => `http://${address}:${listen.port}`)
                     : [];
             // A tunnel the launcher started is the way in for other devices.
             const tunnel = loopback ? app.access?.url : undefined;
