@@ -23,6 +23,24 @@ const provider: AuthProvider = {
     },
 };
 const data = join(root, "external-auth");
+const guestCapability = "example.com/cap/pi-pocket";
+/** Like Tailscale Serve's `--accept-app-caps`: verified capabilities next to the verified subject. */
+const capabilityProvider: AuthProvider = {
+    id: "test-capability-identity",
+    async authenticate(request) {
+        const subject = request.headers["test-subject"];
+        const capabilities = request.headers["test-capabilities"];
+
+        return typeof subject === "string"
+            ? {
+                  subject,
+                  ...(typeof capabilities === "string"
+                      ? { capabilities: JSON.parse(capabilities) }
+                      : {}),
+              }
+            : undefined;
+    },
+};
 let app: App | undefined;
 let server: Server | undefined;
 
@@ -446,4 +464,166 @@ test("required provider startup refuses missing, invalid, throwing, insecure and
         readFileSync(join(data, "config.json"), "utf8"),
         /secret-provider-credential/,
     );
+});
+
+test("guestCapability must be a domain/path capability name; the explicit guest list may be omitted", async () => {
+    const capabilityPolicy = { owner: policy.owner, origin: policy.origin, guestCapability };
+
+    assert.ok(new ExternalAuth(capabilityProvider, capabilityPolicy));
+    assert.ok(new ExternalAuth(capabilityProvider, { ...capabilityPolicy, guests: [] }));
+    assert.ok(new ExternalAuth(provider, { owner: policy.owner, origin: policy.origin }));
+
+    for (const invalid of [
+        "",
+        "pi-pocket",
+        "example.com",
+        "example.com/",
+        "/cap/pi-pocket",
+        "example/cap/pi-pocket",
+        "Example.com/cap/pi-pocket",
+        "example.com/cap pi-pocket",
+        "example.com/cap/pi-pocket\n",
+        "https://example.com/cap/pi-pocket",
+        42,
+        null,
+        [guestCapability],
+    ]) {
+        assert.throws(
+            () =>
+                new ExternalAuth(capabilityProvider, {
+                    ...capabilityPolicy,
+                    guestCapability: invalid as string,
+                }),
+            /Invalid external authentication configuration/,
+            JSON.stringify(invalid),
+        );
+    }
+
+    assert.throws(
+        () => new ExternalAuth(provider, { ...policy, guests: "guest@example.com" as never }),
+        /Invalid external authentication configuration/,
+    );
+    const config = join(root, "capability-auth.json");
+    const module = join(root, "capability-provider.mjs");
+
+    writeFileSync(
+        module,
+        'export default () => ({ id: "startup", async authenticate() { return undefined; } })',
+        { mode: 0o600 },
+    );
+    writeFileSync(config, JSON.stringify({ ...capabilityPolicy, module }), { mode: 0o600 });
+    assert.ok(await loadExternalAuth(config));
+    writeFileSync(config, JSON.stringify({ ...capabilityPolicy, guestCapability: "pi", module }));
+    await assert.rejects(loadExternalAuth(config), /Could not initialize/);
+});
+
+test("an app capability admits one persistent native guest per request; losing it denies without removing the person", async () => {
+    const capabilityData = join(root, "external-capability-auth");
+    const capabilityPolicy = { owner: policy.owner, origin: policy.origin, guestCapability };
+    const granted = { [guestCapability]: [{ role: "guest" }] };
+    const as = (subject: string, capabilities?: unknown) => ({
+        headers: {
+            ...headers(subject),
+            ...(capabilities === undefined
+                ? {}
+                : { "test-capabilities": JSON.stringify(capabilities) }),
+        },
+    });
+    const member = "member@example.com";
+
+    await app!.close();
+    app = await openApp(scriptedModel(), capabilityData);
+    let base = await serve(new ExternalAuth(capabilityProvider, capabilityPolicy));
+
+    // The owner is the exact login, with or without the capability.
+    for (const capabilities of [undefined, {}, granted]) {
+        const me = await (await fetch(base + "/api/me", as(policy.owner, capabilities))).json();
+
+        assert.equal(me.user.id, owner(app).id);
+        assert.equal(me.user.role, "owner");
+    }
+
+    const users = app.config.users.length;
+
+    // Only a guest role value of the configured capability admits; nothing else creates a person.
+    for (const capabilities of [
+        undefined,
+        {},
+        { [guestCapability]: [] },
+        { [guestCapability]: [{}] },
+        { [guestCapability]: [{ role: "viewer" }] },
+        { [guestCapability]: [{ role: "owner" }] },
+        { [guestCapability]: ["guest"] },
+        { [guestCapability]: [[{ role: "guest" }]] },
+        { [guestCapability]: { role: "guest" } },
+        { [guestCapability]: null },
+        { "example.com/cap/other": [{ role: "guest" }] },
+        { "example.com/cap/pi-pocket/extra": [{ role: "guest" }] },
+        [granted],
+        "granted",
+    ]) {
+        assert.equal(
+            (await fetch(base + "/api/me", as(member, capabilities))).status,
+            403,
+            JSON.stringify(capabilities),
+        );
+    }
+
+    assert.equal(app.config.users.length, users);
+    const first = await (await fetch(base + "/api/me", as(member, granted))).json();
+    const merged = await (
+        await fetch(
+            base + "/api/me",
+            as(member, { [guestCapability]: [{ role: "viewer" }, { role: "guest" }] }),
+        )
+    ).json();
+
+    assert.equal(first.user.role, "guest");
+    assert.notEqual(first.user.id, owner(app).id);
+    assert.equal(merged.user.id, first.user.id);
+    // Group removal: the next request is denied, but the native person and binding stay.
+    assert.equal((await fetch(base + "/api/me", as(member))).status, 403);
+    assert.equal((await fetch(base + "/api/me", as(member, {}))).status, 403);
+    assert.equal(app.config.userById(first.user.id)?.role, "guest");
+    app.setAccess(owner(app), first.user.id, { role: "viewer", sessions: [] });
+    const regained = await (await fetch(base + "/api/me", as(member, granted))).json();
+
+    assert.equal(regained.user.id, first.user.id);
+    assert.equal(regained.user.role, "viewer", "the capability is no role: People decides");
+    await stopServer();
+    await app.close();
+    app = await openApp(scriptedModel(), capabilityData);
+    base = await serve(new ExternalAuth(capabilityProvider, capabilityPolicy));
+    const restarted = await (await fetch(base + "/api/me", as(member, granted))).json();
+
+    assert.equal(restarted.user.id, first.user.id);
+    assert.equal(restarted.user.role, "viewer");
+    assert.equal((await fetch(base + "/api/me", as(member))).status, 403);
+    // Removal is a tombstone: the capability cannot recreate the person.
+    app.removeUser(owner(app), first.user.id);
+    assert.equal((await fetch(base + "/api/me", as(member, granted))).status, 403);
+    assert.equal(app.config.users.length, users);
+    await stopServer();
+    // The explicit list still admits without the capability, next to it.
+    base = await serve(
+        new ExternalAuth(capabilityProvider, {
+            ...capabilityPolicy,
+            guests: ["listed@example.com"],
+        }),
+    );
+    const listed = await (await fetch(base + "/api/me", as("listed@example.com"))).json();
+
+    assert.equal(listed.user.role, "guest");
+    assert.equal((await fetch(base + "/api/me", as(member, granted))).status, 403);
+    await stopServer();
+    // Without guestCapability, a capability admits nobody.
+    base = await serve(
+        new ExternalAuth(capabilityProvider, { owner: policy.owner, origin: policy.origin }),
+    );
+    assert.equal((await fetch(base + "/api/me", as("unlisted@example.com", granted))).status, 403);
+    assert.equal(
+        (await (await fetch(base + "/api/me", as(policy.owner))).json()).user.role,
+        "owner",
+    );
+    await stopServer();
 });
