@@ -20,6 +20,7 @@ At the gateway, administrator-owned routing selects the instance, then:
 
 - Overwrite `X-Pocket-Gateway-Secret` with that instance's secret. Never forward a caller-supplied value.
 - Forward only the authoritative `Tailscale-User-Login` from Serve. It is the exact full login, not the user's display name. Do not let request parameters, cookies, role headers, paths or arbitrary hostnames choose a login or secret.
+- When guests are admitted [by app capability](#guests-by-app-capability), forward Serve's `Tailscale-App-Capabilities` unchanged, and never set it from anything else.
 - Preserve the public browser Origin. Set trusted Host/forwarding headers for that public address. Do not rewrite hostile Origins into the allowed origin.
 - Proxy **every** route through this boundary, including static/PWA files, SSE, polls, published artifacts, extension public pages and webhooks. Do not add anonymous exceptions or cache authenticated answers across users.
 - Disable SSE buffering and allow long polling. Strip identity and gateway-secret headers before passing requests to any unrelated upstream. Do not log credentials or assertion headers, enable proxy debug logs, or return them in error pages.
@@ -37,6 +38,7 @@ server {
         # proxy_set_header X-Pocket-Gateway-Secret "<random-base64url-secret>";
         include /etc/pocket-gateway/alice-secret.conf;
         proxy_set_header Tailscale-User-Login $http_tailscale_user_login;
+        proxy_set_header Tailscale-App-Capabilities $http_tailscale_app_capabilities;
         proxy_set_header Tailscale-User-Name "";
         proxy_set_header Host pocket.example.com;
         proxy_set_header X-Forwarded-Host pocket.example.com;
@@ -57,6 +59,41 @@ Here `/run/pi-pocket/alice/pocket.sock` is the instance's Unix socket (`--socket
 Without the injected secret, forged Serve headers and Pocket tokens sent straight to the backend are denied. That does **not** make a TCP backend safe on a host with other Unix users: the gateway sends the secret to whatever listens on the backend address. While the instance restarts (Menu → Restart server, an update, a crash), its port is free; any other user can bind it, receive the gateway's next requests with the secret, and then use the secret against the real instance as the owner. Binding a specific address or loopback does not help.
 
 So on a shared host, run each backend with `--socket` in a folder that the instance's user owns and no other user can write, with the gateway's group ([hosted instances](hosted-instances.md#why-a-socket-not-a-port) has the folder setup and Pi Pocket's startup checks), or give a TCP backend equivalent isolation: an address that no other user can bind, such as a network namespace of its own that they cannot enter. If local users can reach the **gateway ingress**, they can ask it to attach the real secret to a forged login. The secret does not fix an unprotected gateway, and the gateway's own port needs the same care against takeover. Root, the instance owner, the gateway, tailscaled and owner-UID code are trusted. Do not share secrets between mutually untrusted instances.
+
+## Guests by app capability
+
+Instead of listing every guest's login on every instance, the tailnet policy can grant an app capability (the `app` field of a grant) to a group, and each instance admits whoever holds it as a guest. In the tailnet policy file (outside this repository; merge into its existing `grants`, and the group, tag and capability name are examples):
+
+```json
+{
+    "grants": [
+        {
+            "src": ["group:developers@example.com"],
+            "dst": ["tag:dev-machine"],
+            "ip": ["tcp:443"],
+            "app": {
+                "example.com/cap/pi-pocket": [{ "role": "guest" }]
+            }
+        }
+    ]
+}
+```
+
+Serve passes a capability to its backend only when told to accept it. On the node, with Tailscale **1.104.4 or later** (which fixes TS-2026-017, app capabilities of one Serve mount reaching another), and a single mount at `/` to the gateway ingress (here the Caddy socket of [hosted instances](hosted-instances.md#protect-the-gateway-ingress-first)):
+
+```sh
+sudo tailscale serve --bg --https=443 \
+    --accept-app-caps=example.com/cap/pi-pocket unix:/run/caddy-front/pocket.sock
+```
+
+Serve then sets `Tailscale-App-Capabilities` on each proxied request, a JSON object of the accepted capabilities the person holds (`{}` for none), and drops a copy sent by the client. Set `"guestCapability": "example.com/cap/pi-pocket"` in the instance configuration, with the same name.
+
+- **The owner is the login alone.** `owner` is matched exactly; the owner needs no capability, and the capability can never make anyone the owner.
+- **Only the guest role admits.** The capability's values must include an object with `"role": "guest"`. Other values (`{"role": "viewer"}`, `{}`, an empty list) admit nobody: viewer access is a downgrade in People, not a tailnet role.
+- **Checked on every request.** A person removed from the group is denied from their next request, without a restart (`403` if they can still reach the node); their native person and settings stay. Re-adding them restores the same person, unless they were removed in People: that tombstone stays.
+- **Identity still comes from the login.** The capability header counts only after the gateway secret and `Tailscale-User-Login` checks; a forged one without the secret, or one for a tagged device, is denied.
+
+The provider accepts the header only as Serve writes it: one header line, at most 8 KiB, holding a JSON object whose values are lists. Serve sends a value with characters outside printable ASCII in RFC 2047 "Q" encoding (`=?utf-8?q?…?=`, in one or more words separated by single spaces); the provider decodes exactly that form as strict UTF-8. Anything else (a repeated header, invalid JSON, another charset or `B` encoding, raw non-ASCII bytes, an oversize value) counts as **no capabilities**: it never denies the owner or a listed guest, and never admits anyone.
 
 ## Single origin with path prefixes
 
@@ -83,12 +120,12 @@ Write a restricted `0600` JSON file, for example `/home/alice/.pi-pocket/externa
         "secretFile": "/home/alice/.pi-pocket/gateway-secret"
     },
     "owner": "alice@example.com",
-    "guests": ["trusted-friend@example.com"],
+    "guestCapability": "example.com/cap/pi-pocket",
     "origin": "https://pocket.example.com"
 }
 ```
 
-Use the installed checkout's actual absolute module path. The namespace is `tailscale`, and the subject is the full `Tailscale-User-Login` string, compared case-sensitively with no normalization. Display names, client IPs, cookie/bearer tokens and request-supplied roles have no authority. The secret is checked with a constant-time comparison of fixed-length SHA-256 digests; missing/wrong assertions, missing login, tagged-node logins and merged duplicate assertions are denied. No native guest bearer tokens are minted or stored at the gateway.
+Use the installed checkout's actual absolute module path. Instead of, or next to, `guestCapability`, `"guests": ["trusted-friend@example.com"]` lists guests by exact login. The namespace is `tailscale`, and the subject is the full `Tailscale-User-Login` string, compared case-sensitively with no normalization. Display names, client IPs, cookie/bearer tokens and request-supplied roles have no authority. The secret is checked with a constant-time comparison of fixed-length SHA-256 digests; missing/wrong assertions, missing login, tagged-node logins and merged duplicate assertions are denied. No native guest bearer tokens are minted or stored at the gateway.
 
 Start with the external configuration in the service environment:
 
@@ -97,6 +134,6 @@ PI_POCKET_AUTH_CONFIG=/home/alice/.pi-pocket/external-auth.json \
     node bin/pi-pocket.js --socket /run/pi-pocket/alice/pocket.sock --data /home/alice/.pi-pocket
 ```
 
-Pi Pocket refuses to start if the socket's folder is a symlink, belongs to a user other than the instance's or root, or is writable by its group or others. The socket does not secure gateway ingress; the protected topology above does. Open the **public gateway address**, not the backend. There is no bootstrap QR/invite: the exact owner identity gets native owner access immediately. Other identities are denied unless explicitly listed. **Every newly admitted guest can steer Pi, execute commands as Alice's Unix user, and initially see all sessions.** Only list people trusted with that access. Viewer/session/budget edits then persist across browsers and restarts. Native removal is permanent until explicit offline readmission; restarting does not recreate a deleted person.
+Pi Pocket refuses to start if the socket's folder is a symlink, belongs to a user other than the instance's or root, or is writable by its group or others. The socket does not secure gateway ingress; the protected topology above does. Open the **public gateway address**, not the backend. There is no bootstrap QR/invite: the exact owner identity gets native owner access immediately. Other identities are denied unless listed in `guests` or granted the guest capability. **Every newly admitted guest can steer Pi, execute commands as Alice's Unix user, and initially see all sessions.** Only list, or grant the capability to, people trusted with that access. Viewer/session/budget edits then persist across browsers and restarts. Native removal is permanent until explicit offline readmission; restarting does not recreate a deleted person.
 
-Keep `PI_POCKET_AUTH_CONFIG` required in the service unit/environment after updates and restarts. Before admitting users, test from another unprivileged Unix account: the backend socket must refuse its connections, and no backend TCP port may be listening; direct requests with forged Serve headers must fail; the gateway ingress must be unreachable; an authenticated unlisted tailnet user and a tagged device must fail. Verify owner and allowlisted guest roles, a persisted viewer downgrade and removal after restart. No live Tailscale credentials or deployment are required by the repository's automated tests; they drive real HTTP with fabricated authenticated/forged gateway assertions.
+Keep `PI_POCKET_AUTH_CONFIG` required in the service unit/environment after updates and restarts. Before admitting users, test from another unprivileged Unix account: the backend socket must refuse its connections, and no backend TCP port may be listening; direct requests with forged Serve headers must fail; the gateway ingress must be unreachable; an authenticated unlisted tailnet user without the capability and a tagged device must fail. Verify owner and guest roles, a persisted viewer downgrade and removal after restart; with `guestCapability`, also that removing a guest from the granted group denies their next request and re-adding them restores the same person. No live Tailscale credentials or deployment are required by the repository's automated tests; they drive real HTTP with fabricated authenticated/forged gateway assertions.
