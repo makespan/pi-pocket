@@ -15,13 +15,11 @@ export function SignIn() {
         }
 
         try {
+            // A link copied with another address of this server (127.0.0.1, a LAN address) opens here, on this origin.
             const url = new URL(text, location.origin);
+            const route = appRoute(url.pathname);
 
-            if (
-                url.origin === location.origin &&
-                appRoute(url.pathname) !== null &&
-                (appRoute(url.pathname).startsWith("/join/") || appRoute(url.pathname) === "/login")
-            ) {
+            if (route !== null && (route.startsWith("/join/") || route === "/login")) {
                 location.href = `${url.pathname}${url.search}`;
 
                 return;
