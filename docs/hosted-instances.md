@@ -92,7 +92,7 @@ In the tailnet policy, outside this repository, grant only the developers' group
 }
 ```
 
-Only `{"role": "guest"}` admits; Pocket needs no capability for an owner, but each owner still needs network access to the node, here through the group. Removing someone from the group denies their next request on every instance.
+Only `{"role": "guest"}` admits; Pocket needs no capability for an owner, but each owner still needs network access to the node, here through the group. Removing someone from the group denies their next request on every instance, but an open event stream, a waiting long poll and Web Push notifications to subscriptions they registered continue until they are removed in People ([details](tailscale-auth.md#guests-by-app-capability)). When someone leaves the group, remove them in People on each instance (or through your admin procedure).
 
 ## Route without stripping the prefix
 
@@ -215,7 +215,7 @@ Each location sets its own secret, and nginx inherits `proxy_set_header` only wh
 - Restarting an instance (Menu → Restart server, or its service) brings it back on the same socket; during the restart no other account can take its place. A copy of a socket folder made group-writable, or replaced by a symlink, makes Pocket refuse to start with exit code 78.
 - The gateway's admin interface is not on a TCP port (with Caddy, `curl http://localhost:2019/config/` fails for every account) and its socket folder is private to the gateway.
 - Forged identity and `Tailscale-App-Capabilities` headers sent through Serve do not override the real human identity or grant the capability. Missing and tagged identities, and people outside the granted group, are denied.
-- Removing a guest from the granted group denies their next request without a restart (with the grant above they also lose the node's `tcp:443`; a person who can still reach it without the capability gets `403`); adding them back restores the same person. A person removed in People stays denied while still in the group. Pocket admits the owner by login whether or not they hold the capability.
+- Removing a guest from the granted group denies their next request without a restart (with the grant above they also lose the node's `tcp:443`; a person who can still reach it without the capability gets `403`); adding them back restores the same person. A person removed in People stays denied while still in the group, and their open event streams and Web Push notifications stop. Pocket admits the owner by login whether or not they hold the capability.
 - The same human is owner on their instance and guest/viewer on another, never the other instance's owner. Native permissions, viewer downgrade, budget/session changes and removal persist across restart.
 - Both prefixes load assets, SSE/poll, deep links, artifacts, themes and extensions. PWA install/share/notification URLs and browser state stay associated with the correct instance.
 - Secrets are absent from browser responses and access/error/debug logs. Every instance runs under its intended UID/HOME with a different secret.

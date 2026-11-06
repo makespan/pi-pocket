@@ -59,6 +59,7 @@ function grantsGuest(principal: AuthPrincipal, capability: string | undefined): 
             (value) =>
                 typeof value === "object" &&
                 value !== null &&
+                Object.hasOwn(value, "role") &&
                 (value as { role?: unknown }).role === "guest",
         )
     );
