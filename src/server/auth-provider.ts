@@ -130,10 +130,16 @@ export class ExternalAuth {
         // The router grants this exception only to verified signed assets and capability-only
         // public routes. Their sandbox has an opaque origin; this never grants access to an API.
         const opaque = opaqueCapability && (origin === undefined || origin === "null");
+        // A link followed from another site (a chat, mail or issue) opens a top-level document: it only reads, and a
+        // frame, a subresource or any other method from another site is still refused below. Origin is checked too.
+        const navigation =
+            (request.method === "GET" || request.method === "HEAD") &&
+            request.headers["sec-fetch-mode"] === "navigate" &&
+            request.headers["sec-fetch-dest"] === "document";
 
         if (
             (origin !== undefined && origin !== this.#policy.origin && !opaque) ||
-            (request.headers["sec-fetch-site"] === "cross-site" && !opaque) ||
+            (request.headers["sec-fetch-site"] === "cross-site" && !opaque && !navigation) ||
             (mutation && origin !== this.#policy.origin && !opaque)
         ) {
             throw new HttpError(403, "Use Pi Pocket's configured origin");
