@@ -2,6 +2,7 @@
 // Unix user could take while the server restarts (and so receive the gateway's per-instance secret).
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import {
     chmodSync,
@@ -26,7 +27,8 @@ import { fileURLToPath } from "node:url";
 const root = mkdtempSync(join(realpathSync(tmpdir()), "pps-"));
 const main = fileURLToPath(new URL("../src/server/main.ts", import.meta.url));
 const launcher = fileURLToPath(new URL("../bin/pi-pocket.js", import.meta.url));
-const secret = "gateway-secret-for-socket-test";
+const secret = randomBytes(32).toString("base64url");
+const guestCapability = "example.com/cap/pi-pocket";
 
 after(() => rmSync(root, { recursive: true, force: true }));
 
@@ -40,29 +42,21 @@ function socketFolder(name: string, mode = 0o750): string {
     return folder;
 }
 
+/** The bundled Tailscale provider, admitting guests by app capability as the hosting guide configures it. */
 function externalAuthConfig(): string {
-    const module = join(root, "provider.mjs");
+    const secretFile = join(root, "gateway-secret");
     const config = join(root, "auth.json");
 
-    writeFileSync(
-        module,
-        `export default () => ({
-    id: "socket-test",
-    async authenticate(request) {
-        const login = request.headers["test-login"];
-        return request.headers["x-pocket-gateway-secret"] === ${JSON.stringify(secret)} && typeof login === "string"
-            ? { subject: login }
-            : undefined;
-    },
-});`,
-        { mode: 0o600 },
-    );
+    writeFileSync(secretFile, secret + "\n", { mode: 0o600 });
     writeFileSync(
         config,
         JSON.stringify({
-            module,
+            module: fileURLToPath(
+                new URL("../src/server/auth-providers/tailscale.ts", import.meta.url),
+            ),
+            options: { secretFile },
             owner: "alice@example.com",
-            guests: [],
+            guestCapability,
             origin: "https://pocket.example.com",
         }),
         { mode: 0o600 },
@@ -174,7 +168,7 @@ test(
             assert.equal(lstatSync(socket).mode & 0o777, 0o660);
             const gateway = {
                 "x-pocket-gateway-secret": secret,
-                "test-login": "alice@example.com",
+                "tailscale-user-login": "alice@example.com",
             };
             const me = await overSocket(socket, "/alice.name/api/me", gateway);
 
@@ -186,7 +180,7 @@ test(
             assert.equal(
                 (
                     await overSocket(socket, "/alice.name/api/me", {
-                        "test-login": "alice@example.com",
+                        "tailscale-user-login": "alice@example.com",
                     })
                 ).status,
                 403,
@@ -224,6 +218,36 @@ test(
                     })
                 ).status,
                 200,
+            );
+            // What Serve with --accept-app-caps and Caddy pass on for Bob, a member of the granted group.
+            const bob = (capabilities: string, gatewaySecret = secret) => ({
+                ...forwarded,
+                "x-pocket-gateway-secret": gatewaySecret,
+                "tailscale-user-login": "bob@example.com",
+                "tailscale-user-name": "Bob",
+                "tailscale-app-capabilities": capabilities,
+            });
+            const granted = JSON.stringify({ [guestCapability]: [{ role: "guest" }] });
+            const guest = await overSocket(socket, "/alice.name/api/me", bob(granted));
+
+            assert.equal(guest.status, 200);
+            assert.equal(JSON.parse(guest.body).user.role, "guest");
+            assert.equal(
+                JSON.parse((await overSocket(socket, "/alice.name/api/me", bob(granted))).body).user
+                    .id,
+                JSON.parse(guest.body).user.id,
+            );
+            assert.equal((await overSocket(socket, "/alice.name/api/me", bob("{}"))).status, 403);
+            assert.equal(
+                (
+                    await overSocket(
+                        socket,
+                        "/alice.name/api/me",
+                        bob(granted, randomBytes(32).toString("base64url")),
+                    )
+                ).status,
+                403,
+                "a forged capability without the gateway's secret",
             );
             assert.doesNotMatch(started.output(), /http:\/\//);
         } finally {

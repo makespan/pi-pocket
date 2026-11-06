@@ -2,7 +2,7 @@ import { cleanUp, openApp, owner, root, scriptedModel, type App } from "./helper
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { chmodSync, symlinkSync, writeFileSync } from "node:fs";
-import { createServer, type Server } from "node:http";
+import { createServer, request, type Server } from "node:http";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -15,8 +15,11 @@ const secret = randomBytes(32).toString("base64url");
 const policy = {
     owner: "owner@example.com",
     guests: ["friend@example.com"],
+    guestCapability: "example.com/cap/pi-pocket",
     origin: "https://pocket.example.com",
 };
+/** Serve's `Tailscale-App-Capabilities` for a member of the granted group, with `--accept-app-caps`. */
+const granted = JSON.stringify({ [policy.guestCapability]: [{ role: "guest" }] });
 let app: App;
 let server: Server;
 let base: string;
@@ -59,6 +62,52 @@ const headers = (login: string) => ({
     "x-pocket-gateway-secret": secret,
     "tailscale-user-login": login,
 });
+const withCapabilities = (login: string, capabilities = granted) => ({
+    ...headers(login),
+    "tailscale-app-capabilities": capabilities,
+});
+
+/** RFC 2047 "Q" encoding as Go's mime.QEncoding writes it, which Serve uses for non-ASCII values. */
+function qEncode(value: string, charset = "utf-8", wordBytes = 40): string {
+    const words: string[] = [];
+    const bytes = Buffer.from(value, "utf8");
+
+    for (let start = 0; start < bytes.length; start += wordBytes) {
+        let text = "";
+
+        for (const byte of bytes.subarray(start, start + wordBytes)) {
+            const char = String.fromCharCode(byte);
+
+            text +=
+                byte === 0x20
+                    ? "_"
+                    : byte >= 0x21 && byte <= 0x7e && !"=?_".includes(char)
+                      ? char
+                      : "=" + byte.toString(16).toUpperCase().padStart(2, "0");
+        }
+
+        words.push(`=?${charset}?q?${text}?=`);
+    }
+
+    return words.join(" ");
+}
+
+/** Exact header lines, so a header can be sent twice instead of merged into one value. */
+function exactStatus(path: string, lines: [string, string | string[]][]): Promise<number> {
+    return new Promise((resolve, reject) => {
+        const sent = request(base + path, (response) => {
+            response.resume();
+            resolve(response.statusCode!);
+        });
+
+        for (const [name, value] of lines) {
+            sent.setHeader(name, value);
+        }
+
+        sent.on("error", reject);
+        sent.end();
+    });
+}
 
 test("Tailscale provider denies forged Serve headers on localhost, tagged nodes, missing and unallowed identities", async () => {
     const assertions: Record<string, string>[] = [
@@ -118,6 +167,167 @@ test("authenticated full login maps to owner or one persistent native guest, nev
     assert.deepEqual(viewer.user.sessions, []);
     app.removeUser(owner(app), first.user.id);
     assert.equal((await fetch(base + "/api/me", { headers: guestHeaders })).status, 403);
+});
+
+test("Serve's app capability admits a persistent guest on every request; group removal denies the next one", async () => {
+    const member = "member@example.com";
+
+    for (const capabilities of [undefined, "{}", granted]) {
+        const me = await (
+            await fetch(base + "/api/me", {
+                headers:
+                    capabilities === undefined
+                        ? headers(policy.owner)
+                        : withCapabilities(policy.owner, capabilities),
+            })
+        ).json();
+
+        assert.equal(me.user.role, "owner", "the owner needs only the exact login");
+        assert.equal(me.user.id, owner(app).id);
+    }
+
+    // Serve with --accept-app-caps sends `{}` to a tailnet member outside the granted group.
+    assert.equal((await fetch(base + "/api/me", { headers: headers(member) })).status, 403);
+    assert.equal(
+        (await fetch(base + "/api/me", { headers: withCapabilities(member, "{}") })).status,
+        403,
+    );
+    const first = await (
+        await fetch(base + "/api/me", {
+            headers: { ...withCapabilities(member), "tailscale-user-name": policy.owner },
+        })
+    ).json();
+    const second = await (
+        await fetch(base + "/api/me", { headers: withCapabilities(member) })
+    ).json();
+
+    assert.equal(first.user.role, "guest");
+    assert.equal(first.user.id, second.user.id);
+    assert.notEqual(first.user.id, owner(app).id);
+    assert.equal(
+        (await fetch(base + "/api/me", { headers: withCapabilities(member, "{}") })).status,
+        403,
+    );
+    assert.equal(app.config.userById(first.user.id)?.role, "guest", "not deleted");
+    // A non-ASCII grant value arrives RFC 2047 encoded, in several encoded words.
+    const encoded = qEncode(
+        JSON.stringify({
+            [policy.guestCapability]: [{ role: "guest", team: "Entwicklung · Zoë" }],
+        }),
+    );
+
+    assert.match(encoded, /^=\?utf-8\?q\?.*\?= =\?utf-8\?q\?/);
+
+    for (const value of [encoded, encoded.replaceAll("=?utf-8?q?", "=?UTF-8?Q?")]) {
+        const regained = await (
+            await fetch(base + "/api/me", { headers: withCapabilities(member, value) })
+        ).json();
+
+        assert.equal(regained.user.id, first.user.id);
+    }
+
+    app.removeUser(owner(app), first.user.id);
+    assert.equal(
+        (await fetch(base + "/api/me", { headers: withCapabilities(member) })).status,
+        403,
+    );
+});
+
+test("forged, malformed, duplicate and oversize app capability headers grant nothing", async () => {
+    const member = "capability-member@example.com";
+    const users = app.config.users.length;
+    const forged: Record<string, string>[] = [
+        { "tailscale-user-login": member, "tailscale-app-capabilities": granted },
+        {
+            ...withCapabilities(member),
+            "x-pocket-gateway-secret": randomBytes(32).toString("base64url"),
+        },
+        { "x-pocket-gateway-secret": secret, "tailscale-app-capabilities": granted },
+        { ...withCapabilities("tag:server"), "tailscale-user-name": member },
+        { ...withCapabilities("member") },
+    ];
+
+    for (const assertion of forged) {
+        assert.equal((await fetch(base + "/api/me", { headers: assertion })).status, 403);
+    }
+
+    const oversize = JSON.stringify({
+        [policy.guestCapability]: [{ role: "guest", padding: "x".repeat(9000) }],
+    });
+    const malformed = [
+        "",
+        "not json",
+        "{",
+        "null",
+        "[]",
+        '"granted"',
+        JSON.stringify([JSON.parse(granted)]),
+        JSON.stringify({ [policy.guestCapability]: { role: "guest" } }),
+        // One non-list value makes the whole header invalid.
+        JSON.stringify({ ...JSON.parse(granted), "example.com/cap/other": true }),
+        granted + ", " + granted,
+        oversize,
+        qEncode(granted, "iso-8859-1"),
+        `=?utf-8?b?${Buffer.from(granted).toString("base64")}?=`,
+        qEncode(granted).replace("=?utf-8?q?", "=?utf-8?q?=ZZ"),
+        // Not UTF-8 (a lone lead byte) inside an otherwise granting JSON string.
+        qEncode(
+            JSON.stringify({ [policy.guestCapability]: [{ role: "guest", team: "Zo" }] }),
+        ).replace("Zo", "Zo=C3"),
+        qEncode(granted).replace("=?utf-8?q?", "=?utf-8?q?a?b"),
+        qEncode(granted) + " trailing",
+        "{} " + qEncode(granted),
+        qEncode(granted).replace(" ", "  "),
+        qEncode(granted).replace("?=", ""),
+        qEncode("x".repeat(9000)),
+        // Serve sends non-ASCII only RFC 2047 encoded: raw UTF-8 bytes are not its assertion.
+        Buffer.from(
+            JSON.stringify({ [policy.guestCapability]: [{ role: "guest", team: "Zoë" }] }),
+        ).toString("latin1"),
+    ];
+
+    for (const value of malformed) {
+        assert.equal(
+            await exactStatus("/api/me", [
+                ...Object.entries(headers(member)),
+                ["tailscale-app-capabilities", value],
+            ]),
+            403,
+            value.slice(0, 80),
+        );
+        // Capabilities never decide the owner, so a bad header does not lock them out.
+        assert.equal(
+            await exactStatus("/api/me", [
+                ...Object.entries(headers(policy.owner)),
+                ["tailscale-app-capabilities", value],
+            ]),
+            200,
+            value.slice(0, 80),
+        );
+    }
+
+    // Two header lines, even both granting, are not one Serve assertion.
+    for (const values of [
+        [granted, granted],
+        [granted, "{}"],
+    ]) {
+        assert.equal(
+            await exactStatus("/api/me", [
+                ...Object.entries(headers(member)),
+                ["tailscale-app-capabilities", values],
+            ]),
+            403,
+        );
+    }
+
+    assert.equal(app.config.users.length, users, "no person created");
+    assert.equal(
+        await exactStatus("/api/me", [
+            ...Object.entries(headers(member)),
+            ["tailscale-app-capabilities", granted],
+        ]),
+        200,
+    );
 });
 
 test("Tailscale provider requires a restricted non-symlink secret file with a sufficiently long secret", () => {
