@@ -1,7 +1,7 @@
 import { cleanUp, newSession, openApp, owner, root, scriptedModel, type App } from "./helpers.ts";
 import assert from "node:assert/strict";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
-import { createServer, type Server } from "node:http";
+import { createServer, request, type Server } from "node:http";
 import { join } from "node:path";
 import { after, afterEach, test } from "node:test";
 import { ExternalAuth, loadExternalAuth, type AuthProvider } from "../src/server/auth-provider.ts";
@@ -292,6 +292,104 @@ test("external CSRF uses pinned origin, not forwarded Host or X-Pocket alone", a
         ).status,
         403,
     );
+    await stopServer();
+});
+
+/** Exact request headers: fetch() would replace the Fetch Metadata that a browser sends. */
+function exactRequest(
+    base: string,
+    path: string,
+    options: { method?: string; headers: Record<string, string>; body?: string },
+): Promise<number> {
+    return new Promise((resolve, reject) => {
+        const sent = request(base + path, options, (response) => {
+            response.resume();
+            resolve(response.statusCode!);
+        });
+
+        sent.on("error", reject);
+        sent.end(options.body);
+    });
+}
+
+test("a link from another site opens the app; cross-site frames, subresources and posts stay denied", async () => {
+    const base = await serve();
+    const crossSite = (fetchHeaders: Record<string, string>, subject = policy.owner) => ({
+        ...headers(subject),
+        "sec-fetch-site": "cross-site",
+        ...fetchHeaders,
+    });
+    const link = { "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" };
+
+    // A Slack, GitHub or mail link to a session: the browser sends no Origin on this GET.
+    for (const method of ["GET", "HEAD"]) {
+        for (const path of ["/s/1", "/"]) {
+            assert.equal(
+                await exactRequest(base, path, { method, headers: crossSite(link) }),
+                200,
+                `${method} ${path}`,
+            );
+        }
+    }
+
+    assert.equal(
+        await exactRequest(base, "/s/1", {
+            headers: crossSite({ ...link, origin: policy.origin }),
+        }),
+        200,
+    );
+    // Still the identity first, and never another origin.
+    assert.equal(
+        await exactRequest(base, "/s/1", {
+            headers: crossSite(link, "not-allowed@example.com"),
+        }),
+        403,
+    );
+    assert.equal(
+        await exactRequest(base, "/s/1", {
+            headers: crossSite({ ...link, origin: "https://hostile.example" }),
+        }),
+        403,
+    );
+
+    const denied: Record<string, string>[] = [
+        { "sec-fetch-mode": "navigate", "sec-fetch-dest": "iframe" },
+        { "sec-fetch-mode": "navigate", "sec-fetch-dest": "embed" },
+        { "sec-fetch-mode": "no-cors", "sec-fetch-dest": "script" },
+        { "sec-fetch-mode": "no-cors", "sec-fetch-dest": "image" },
+        { "sec-fetch-mode": "cors", "sec-fetch-dest": "empty" },
+        { "sec-fetch-mode": "navigate" },
+        { "sec-fetch-dest": "document" },
+        {},
+    ];
+
+    for (const fetchHeaders of denied) {
+        for (const path of ["/s/1", "/app.js", "/api/me"]) {
+            assert.equal(
+                await exactRequest(base, path, { headers: crossSite(fetchHeaders) }),
+                403,
+                `${path} ${JSON.stringify(fetchHeaders)}`,
+            );
+        }
+    }
+
+    // A cross-site form post is a document navigation too: methods other than GET and HEAD stay denied.
+    for (const origin of [policy.origin, undefined]) {
+        const status = await exactRequest(base, "/api/me", {
+            method: "POST",
+            headers: {
+                ...crossSite(link),
+                ...(origin === undefined ? {} : { origin }),
+                "x-pocket": "1",
+                "content-type": "application/json",
+            },
+            body: JSON.stringify({ name: "Forged" }),
+        });
+
+        assert.equal(status, 403);
+    }
+
+    assert.notEqual(app!.config.userById(owner(app!).id)?.name, "Forged");
     await stopServer();
 });
 
