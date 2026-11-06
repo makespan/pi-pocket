@@ -1,6 +1,6 @@
 # Running behind a path-prefix proxy
 
-One Pocket can run as each Unix user, with a separate port and data folder, behind one reverse proxy. For example, run this as `julian.rath`:
+One Pocket can run as each Unix user, with a separate port (or Unix socket) and data folder, behind one reverse proxy. For example, run this as `julian.rath`:
 
 ```sh
 pi-pocket --host 127.0.0.1 --port 8787 --base-path /julian.rath
@@ -9,7 +9,7 @@ pi-pocket --host 127.0.0.1 --port 8787 --base-path /julian.rath
 
 The flag overrides the environment. The default is the existing root installation. An empty value or `/` means root; other values must start with `/`, have no trailing slash, and contain only letters, digits, `.`, `_`, and `-` in nonempty segments. Whole `.` and `..` segments are forbidden. `/team/julian.rath` is also valid. This is a startup option, not stored configuration.
 
-Give each instance its own port, Unix account, and data directory. Use disjoint public mounts, such as `/julian.rath/` and `/jakob.auer/`, not overlapping mounts. This guide describes the proxy contract, not host provisioning. For the combined owner/guest login setup and its fully trusted-group restriction, see [several hosted instances](hosted-instances.md) and [Tailscale authentication](tailscale-auth.md#single-origin-with-path-prefixes).
+Give each instance its own port, Unix account, and data directory. On a host shared with other Unix users, give each one a Unix socket (`--socket`) in an administrator-made folder instead of a port: another user can bind a free port while the instance restarts and receive what the proxy sends it ([hosted instances](hosted-instances.md#why-a-socket-not-a-port)). Use disjoint public mounts, such as `/julian.rath/` and `/jakob.auer/`, not overlapping mounts. This guide describes the proxy contract, not host provisioning. For the combined owner/guest login setup and its fully trusted-group restriction, see [several hosted instances](hosted-instances.md) and [Tailscale authentication](tailscale-auth.md#single-origin-with-path-prefixes).
 
 ## Proxy contract
 
@@ -32,7 +32,7 @@ location /julian.rath/ {
 }
 ```
 
-Use the equivalent prefix-preserving behavior with another proxy. Do not decode or normalize ambiguous request paths into acceptable ones before forwarding them. Do not strip or add a prefix using `X-Forwarded-Prefix`: Pocket uses only its startup setting. Redirect the bare mount to its trailing-slash URL at the proxy; Pocket itself requires that slash. Forward SSE responses without buffering; live updates use SSE or long polling, not WebSockets. Terminate HTTPS at the proxy for push and PWA sharing. Restrict direct backend access and replace client-supplied forwarding headers with trusted proxy values. Links use the public host and scheme supplied by that proxy.
+Use the equivalent prefix-preserving behavior with another proxy (with Caddy, `handle`, not `handle_path`, which strips the prefix). For a socket, the nginx target is `http://unix:/run/pi-pocket/julian.rath/pocket.sock` with no URI part, and Caddy's is `unix//run/pi-pocket/julian.rath/pocket.sock`. Do not decode or normalize ambiguous request paths into acceptable ones before forwarding them. Do not strip or add a prefix using `X-Forwarded-Prefix`: Pocket uses only its startup setting. Redirect the bare mount to its trailing-slash URL at the proxy; Pocket itself requires that slash. Forward SSE responses without buffering; live updates use SSE or long polling, not WebSockets. Terminate HTTPS at the proxy for push and PWA sharing. Restrict direct backend access and replace client-supplied forwarding headers with trusted proxy values. Links use the public host and scheme supplied by that proxy.
 
 All app assets, API URLs, login/invite destinations, themes, extension modules, artifacts, public pages, push links, and PWA URLs include the mount. External addresses and webhook/message payload text are not rewritten. A login `next` must be a path inside this same mount. Cookies use a mount-specific name and `Path=/julian.rath/`; root keeps `pocket_auth` and `Path=/`.
 
