@@ -124,9 +124,10 @@ function overSocket(
     socketPath: string,
     path: string,
     headers: Record<string, string> = {},
+    body?: { method: string; text: string },
 ): Promise<{ status: number; body: string }> {
     return new Promise((resolve, reject) => {
-        const sent = request({ socketPath, path, headers }, (response) => {
+        const sent = request({ socketPath, path, headers, method: body?.method }, (response) => {
             let body = "";
 
             response.setEncoding("utf8");
@@ -135,7 +136,7 @@ function overSocket(
         });
 
         sent.on("error", reject);
-        sent.end();
+        sent.end(body?.text);
     });
 }
 
@@ -189,6 +190,40 @@ test(
                     })
                 ).status,
                 403,
+            );
+            // As Tailscale Serve and Caddy forward to a socket: Host is localhost, the public host is forwarded. The
+            // pinned origin decides, never one made from Host.
+            const forwarded = {
+                ...gateway,
+                host: "localhost",
+                "x-forwarded-host": "pocket.example.com",
+                "x-forwarded-proto": "https",
+            };
+            const rename = (origin: string) =>
+                overSocket(
+                    socket,
+                    "/alice.name/api/me",
+                    {
+                        ...forwarded,
+                        origin,
+                        "x-pocket": "1",
+                        "content-type": "application/json",
+                    },
+                    { method: "POST", text: JSON.stringify({ name: "Alice" }) },
+                );
+
+            assert.equal((await rename("https://pocket.example.com")).status, 200);
+            assert.equal((await rename("http://localhost")).status, 403);
+            assert.equal(
+                (
+                    await overSocket(socket, "/alice.name/s/1", {
+                        ...forwarded,
+                        "sec-fetch-site": "cross-site",
+                        "sec-fetch-mode": "navigate",
+                        "sec-fetch-dest": "document",
+                    })
+                ).status,
+                200,
             );
             assert.doesNotMatch(started.output(), /http:\/\//);
         } finally {
