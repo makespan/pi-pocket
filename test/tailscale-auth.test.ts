@@ -186,7 +186,7 @@ test("Serve's app capability admits a persistent guest on every request; group r
         assert.equal(me.user.id, owner(app).id);
     }
 
-    // Serve with --accept-app-caps sends `{}` to a tailnet member outside the granted group.
+    // For a tailnet member outside the granted group, Serve omits the header or sends `{}`.
     assert.equal((await fetch(base + "/api/me", { headers: headers(member) })).status, 403);
     assert.equal(
         (await fetch(base + "/api/me", { headers: withCapabilities(member, "{}") })).status,
@@ -218,7 +218,12 @@ test("Serve's app capability admits a persistent guest on every request; group r
 
     assert.match(encoded, /^=\?utf-8\?q\?.*\?= =\?utf-8\?q\?/);
 
-    for (const value of [encoded, encoded.replaceAll("=?utf-8?q?", "=?UTF-8?Q?")]) {
+    // The same grant exactly as Go's `mime.QEncoding.Encode("utf-8", …)` writes it (go1.27.3).
+    const goEncoded =
+        '=?utf-8?q?{"example.com/cap/pi-pocket":[{"role":"guest","team":"Entwicklu?= ' +
+        '=?utf-8?q?ng_=C2=B7_Zo=C3=AB"}]}?=';
+
+    for (const value of [encoded, encoded.replaceAll("=?utf-8?q?", "=?UTF-8?Q?"), goEncoded]) {
         const regained = await (
             await fetch(base + "/api/me", { headers: withCapabilities(member, value) })
         ).json();

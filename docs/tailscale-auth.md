@@ -86,14 +86,15 @@ sudo tailscale serve --bg --https=443 \
     --accept-app-caps=example.com/cap/pi-pocket unix:/run/caddy-front/pocket.sock
 ```
 
-Serve then sets `Tailscale-App-Capabilities` on each proxied request, a JSON object of the accepted capabilities the person holds (`{}` for none), and drops a copy sent by the client. Set `"guestCapability": "example.com/cap/pi-pocket"` in the instance configuration, with the same name.
+Serve then sets `Tailscale-App-Capabilities` on each proxied request, a JSON object of the accepted capabilities the person holds, and drops a copy sent by the client. For a person who holds none, Serve may send `{}` or omit the header; both admit nobody. Set `"guestCapability": "example.com/cap/pi-pocket"` in the instance configuration, with the same name.
 
 - **The owner is the login alone.** `owner` is matched exactly; the owner needs no capability, and the capability can never make anyone the owner.
 - **Only the guest role admits.** The capability's values must include an object with `"role": "guest"`. Other values (`{"role": "viewer"}`, `{}`, an empty list) admit nobody: viewer access is a downgrade in People, not a tailnet role.
 - **Checked on every request.** A person removed from the group is denied from their next request, without a restart (`403` if they can still reach the node); their native person and settings stay. Re-adding them restores the same person, unless they were removed in People: that tombstone stays.
+- **Remove leavers in People too.** Losing the capability does not end what is already running: an open event stream keeps delivering, a waiting long poll answers once (within about 25 seconds), and Web Push subscriptions they registered keep sending notifications (session titles and snippets, approvals, limits) until they are removed in People. When someone leaves the group, remove them in People on each instance (or through your admin procedure).
 - **Identity still comes from the login.** The capability header counts only after the gateway secret and `Tailscale-User-Login` checks; a forged one without the secret, or one for a tagged device, is denied.
 
-The provider accepts the header only as Serve writes it: one header line, at most 8 KiB, holding a JSON object whose values are lists. Serve sends a value with characters outside printable ASCII in RFC 2047 "Q" encoding (`=?utf-8?q?…?=`, in one or more words separated by single spaces); the provider decodes exactly that form as strict UTF-8. Anything else (a repeated header, invalid JSON, another charset or `B` encoding, raw non-ASCII bytes, an oversize value) counts as **no capabilities**: it never denies the owner or a listed guest, and never admits anyone.
+The provider accepts the header only as Serve writes it: one header line, at most 8 KiB, holding a JSON object whose values are lists. Serve sends a value with characters outside printable ASCII in RFC 2047 "Q" encoding (`=?utf-8?q?…?=`, in one or more words separated by single spaces); the provider decodes exactly that form as strict UTF-8. Anything else (a repeated header, invalid JSON, another charset or `B` encoding, raw non-ASCII bytes, a value over 8 KiB) counts as **no capabilities**: it never denies the owner or a listed guest, and never admits anyone. Node separately refuses a request whose headers total more than about 16 KiB (`431`), for everyone, the owner included.
 
 ## Single origin with path prefixes
 

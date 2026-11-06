@@ -35,7 +35,14 @@ const capabilityProvider: AuthProvider = {
             ? {
                   subject,
                   ...(typeof capabilities === "string"
-                      ? { capabilities: JSON.parse(capabilities) }
+                      ? {
+                            // `{"inheritedRole": …}` stands for a value whose role is only on its prototype.
+                            capabilities: JSON.parse(capabilities, (_key, value) =>
+                                typeof value?.inheritedRole === "string"
+                                    ? Object.create({ role: value.inheritedRole })
+                                    : value,
+                            ),
+                        }
                       : {}),
               }
             : undefined;
@@ -553,6 +560,7 @@ test("an app capability admits one persistent native guest per request; losing i
         { [guestCapability]: [{}] },
         { [guestCapability]: [{ role: "viewer" }] },
         { [guestCapability]: [{ role: "owner" }] },
+        { [guestCapability]: [{ inheritedRole: "guest" }] },
         { [guestCapability]: ["guest"] },
         { [guestCapability]: [[{ role: "guest" }]] },
         { [guestCapability]: { role: "guest" } },
