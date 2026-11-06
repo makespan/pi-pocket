@@ -1,5 +1,6 @@
 /** The launcher's command line: its options, from arguments and the environment, and its help. */
 import { parseBasePath } from "../base-path.ts";
+import { parseSocketPath } from "../socket-path.ts";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { ACCESS_MODES, type AccessMode, isAccessMode } from "./access.ts";
@@ -21,10 +22,13 @@ Usage: pi-pocket [options]
       --data DIR      Data folder (default ~/.pi-pocket)
       --base-path PATH  Public mount point (default /)
       --host HOST     Listen on this address instead of choosing an access mode
+      --socket PATH   Listen on this Unix socket for a gateway, instead of an address or an access mode.
+                      An administrator makes its folder, writable by no other user (docs/hosted-instances.md)
       --rotate-token  Replace the owner sign-in link, signing out the devices that used it
   -h, --help          Show this help
 
-Environment: PI_POCKET_ACCESS, PI_POCKET_PORT, PI_POCKET_DIR, PI_POCKET_HOST, PI_POCKET_BASE_PATH, PI_POCKET_GUARD=off`;
+Environment: PI_POCKET_ACCESS, PI_POCKET_PORT, PI_POCKET_DIR, PI_POCKET_HOST, PI_POCKET_SOCKET, PI_POCKET_BASE_PATH,
+PI_POCKET_GUARD=off`;
 
 export interface Options {
     basePath: string;
@@ -32,6 +36,8 @@ export interface Options {
     yes: boolean;
     host: string | undefined;
     port: number;
+    /** A Unix socket to listen on instead of host and port; no access mode applies. */
+    socket: string | undefined;
     cwd: string;
     data: string;
     rotateToken: boolean;
@@ -45,10 +51,13 @@ export function parseArgs(argv: string[]): Options {
         yes: false,
         host: process.env.PI_POCKET_HOST || undefined,
         port: Number(process.env.PI_POCKET_PORT ?? 8787),
+        socket: process.env.PI_POCKET_SOCKET,
         cwd: process.cwd(),
         data: resolve(process.env.PI_POCKET_DIR ?? join(homedir(), ".pi-pocket")),
         rotateToken: false,
     };
+    /** Flags that choose a TCP address, which a Unix socket replaces. */
+    const tcpFlags: string[] = [];
 
     for (let index = 0; index < argv.length; index++) {
         const arg = argv[index]!;
@@ -71,12 +80,17 @@ export function parseArgs(argv: string[]): Options {
             }
 
             options.access = mode as AccessMode;
+            tcpFlags.push(arg);
         } else if (arg === "--yes" || arg === "-y") {
             options.yes = true;
         } else if (arg === "--host") {
             options.host = value();
+            tcpFlags.push(arg);
         } else if (arg === "--port" || arg === "-p") {
             options.port = Number(value());
+            tcpFlags.push(arg);
+        } else if (arg === "--socket") {
+            options.socket = value();
         } else if (arg === "--base-path") {
             options.basePath = value();
         } else if (arg === "--cwd") {
@@ -99,8 +113,13 @@ export function parseArgs(argv: string[]): Options {
 
     try {
         options.basePath = parseBasePath(options.basePath);
+        options.socket = parseSocketPath(options.socket);
     } catch (error) {
         fail((error as Error).message);
+    }
+
+    if (options.socket !== undefined && tcpFlags.length > 0) {
+        fail(`--socket cannot be combined with ${tcpFlags[0]}`);
     }
 
     return options;

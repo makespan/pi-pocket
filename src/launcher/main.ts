@@ -4,6 +4,7 @@
  * 75) or after a crash; the tunnel stays up across those restarts, so its address does not change.
  *
  *   pi-pocket [--access local|lan|cloudflare|tailscale] [-y] [--port 8787] [--cwd DIR] [--data DIR] [--rotate-token]
+ *   pi-pocket --socket PATH [--cwd DIR] [--data DIR] [--rotate-token]   (behind a gateway, no access mode)
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
@@ -280,7 +281,8 @@ async function ensureCloudflared(): Promise<string | undefined> {
 
 // ─── State ──────────────────────────────────────────────────────────────
 
-type Mode = AccessMode | "custom";
+/** `socket`: listening on a Unix socket for a gateway (`--socket`), which no browser opens directly. */
+type Mode = AccessMode | "custom" | "socket";
 
 const state = {
     mode: "local" as Mode,
@@ -332,6 +334,10 @@ function localUrl(): string {
 }
 
 function modeLabel(): string {
+    if (state.mode === "socket") {
+        return "Gateway (Unix socket)";
+    }
+
     if (state.mode === "custom") {
         return `Listening on ${state.host}`;
     }
@@ -352,6 +358,8 @@ function modeNote(): string {
                 : "public https link, new each launch";
         case "tailscale":
             return "devices on your tailnet";
+        case "socket":
+            return options.socket!;
         default:
             return "";
     }
@@ -385,9 +393,11 @@ function sendAccess(): void {
 // ─── The panel ──────────────────────────────────────────────────────────
 
 const KEYS_HINT =
-    process.env.PI_POCKET_AUTH_CONFIG === undefined
-        ? "q quit · r restart server · a access · o open here · s sign-in QR"
-        : "q quit · r restart server · external authentication (use your gateway)";
+    process.env.PI_POCKET_AUTH_CONFIG !== undefined
+        ? "q quit · r restart server · external authentication (use your gateway)"
+        : options.socket !== undefined
+          ? "q quit · r restart server · s sign-in path"
+          : "q quit · r restart server · a access · o open here · s sign-in QR";
 
 async function showPanel(withQr: boolean): Promise<void> {
     const width = columns();
@@ -398,6 +408,8 @@ async function showPanel(withQr: boolean): Promise<void> {
 
     if (process.env.PI_POCKET_AUTH_CONFIG !== undefined) {
         lines.push(row("Open", dim("use your authenticated gateway")));
+    } else if (state.mode === "socket") {
+        lines.push(row("Open", dim("your gateway's address")));
     } else {
         lines.push(row("Open", cyan(`${appUrl()}${options.basePath}/`)));
 
@@ -416,7 +428,11 @@ async function showPanel(withQr: boolean): Promise<void> {
             ? undefined
             : `${reachable() ? appUrl() : localUrl()}${state.loginPath}`;
 
-    if (login !== undefined) {
+    // No http link reaches a Unix socket: show the path to open on the gateway's address, with no QR code.
+    if (state.mode === "socket" && state.loginPath !== undefined) {
+        lines.push(row("Sign in", `${state.loginPath} ${dim("on your gateway's address")}`));
+        lines.push("");
+    } else if (login !== undefined) {
         if (withQr && reachable()) {
             lines.push(
                 `  ${bold("Scan to sign in on your phone.")} ${dim("It is your owner link: keep it private.")}`,
@@ -475,10 +491,9 @@ function startServer(first: boolean): void {
 
     const args = [
         SERVER,
-        "--host",
-        state.host,
-        "--port",
-        String(options.port),
+        ...(state.mode === "socket"
+            ? ["--socket", options.socket!]
+            : ["--host", state.host, "--port", String(options.port)]),
         "--cwd",
         options.cwd,
         "--data",
@@ -784,7 +799,7 @@ async function changeAccess(): Promise<void> {
     log("");
 
     try {
-        const current = state.mode === "custom" ? undefined : state.mode;
+        const current = state.mode === "custom" || state.mode === "socket" ? undefined : state.mode;
         const next = await pickAccess(current);
 
         if (next === undefined || next === state.mode) {
@@ -814,11 +829,11 @@ function onRunKey(key: string): void {
         void quit(0);
     } else if (key === "r") {
         restartServer();
-    } else if (key === "o" && state.loginPath !== undefined) {
+    } else if (key === "o" && state.loginPath !== undefined && state.mode !== "socket") {
         openInBrowser(`${localUrl()}${state.loginPath}`);
     } else if (key === "s") {
         void showPanel(true);
-    } else if (key === "a") {
+    } else if (key === "a" && state.mode !== "socket") {
         busyWithKey = true;
         void changeAccess().finally(() => {
             busyWithKey = false;
@@ -867,7 +882,7 @@ async function main(): Promise<void> {
     // Until the server runs, Ctrl+C (raw mode turns off the terminal's own) still quits, even mid-download.
     onKeys((key) => key === "ctrl-c" && void quit(130));
     const settings = loadSettings();
-    let mode: Mode | undefined = options.access;
+    let mode: Mode | undefined = options.socket === undefined ? options.access : "socket";
 
     if (mode === undefined && options.host !== undefined) {
         mode = loopback(options.host) ? "local" : wildcard(options.host) ? "lan" : "custom";
@@ -881,7 +896,7 @@ async function main(): Promise<void> {
 
     let binary: string | undefined;
 
-    if (mode !== "custom") {
+    if (mode !== "custom" && mode !== "socket") {
         const chosen = await chooseAccess({
             given: mode,
             saved: settings.access,
@@ -908,9 +923,10 @@ async function main(): Promise<void> {
     }
 
     state.mode = mode;
-    state.host = options.host ?? (mode === "custom" ? "127.0.0.1" : bindHost(mode));
+    state.host =
+        options.host ?? (mode === "custom" || mode === "socket" ? "127.0.0.1" : bindHost(mode));
 
-    if (mode !== "custom") {
+    if (mode !== "custom" && mode !== "socket") {
         saveSettings(mode);
     }
 

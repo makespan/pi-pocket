@@ -17,8 +17,11 @@ export interface HttpOptions {
     app: PocketApp;
     /** Required startup-loaded policy, if this instance does not use pairing. */
     externalAuth?: ExternalAuth;
-    /** Where the server listens, to offer reachable invite links when the browser uses a loopback address. */
-    listen: { host: string; port: number };
+    /**
+     * Where the server listens: a TCP address, to offer reachable invite links when the browser uses a loopback address,
+     * or a Unix socket behind a gateway, which has no address of its own to offer.
+     */
+    listen: { host: string; port: number } | { socket: string };
     /** Restart the process (exit code 75 under the launcher). */
     restart(): void;
 }
