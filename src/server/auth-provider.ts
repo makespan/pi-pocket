@@ -10,6 +10,8 @@ import { HttpError } from "./errors.ts";
 export interface AuthPrincipal {
     subject: string;
     name?: string;
+    /** Verified capability grants for this subject (name → values), such as Tailscale app capabilities. */
+    capabilities?: Record<string, unknown[]>;
 }
 
 /** Experimental startup API, independent of the optional Pocket extension loader. Runs as the Unix owner. */
@@ -22,9 +24,44 @@ export interface AuthProvider {
 export interface ExternalAuthPolicy {
     owner: string;
     /** Explicit opt-in to native guest access (steering, Unix-owner commands, all sessions initially). */
-    guests: readonly string[];
+    guests?: readonly string[];
+    /**
+     * Also admit, as a native guest, any subject whose principal holds this capability with a
+     * `{ "role": "guest" }` value. Checked on every request; the owner never needs it.
+     */
+    guestCapability?: string;
     /** Public browser origin, independent of untrusted Host / forwarding headers. */
     origin: string;
+}
+
+/** A domain-qualified capability name, as Tailscale app capabilities use: `example.com/cap/pi-pocket`. */
+const capabilityName = /^[a-z0-9.-]+\.[a-z]{2,}\/[A-Za-z0-9._/-]+$/;
+
+/** Whether a provider's verified grants for `capability` include a guest role value. */
+function grantsGuest(principal: AuthPrincipal, capability: string | undefined): boolean {
+    const capabilities: unknown = principal.capabilities;
+
+    if (
+        capability === undefined ||
+        typeof capabilities !== "object" ||
+        capabilities === null ||
+        Array.isArray(capabilities) ||
+        !Object.hasOwn(capabilities, capability)
+    ) {
+        return false;
+    }
+
+    const values: unknown = (capabilities as Record<string, unknown>)[capability];
+
+    return (
+        Array.isArray(values) &&
+        values.some(
+            (value) =>
+                typeof value === "object" &&
+                value !== null &&
+                (value as { role?: unknown }).role === "guest",
+        )
+    );
 }
 
 /** Read an admin/owner-owned regular file without following a symlink; other Unix accounts get no access. */
@@ -74,7 +111,7 @@ async function bounded<T>(run: (signal: AbortSignal) => Promise<T>, timeoutMs: n
 
 export class ExternalAuth {
     readonly #provider: AuthProvider;
-    readonly #policy: ExternalAuthPolicy;
+    readonly #policy: ExternalAuthPolicy & { guests: readonly string[] };
     readonly #timeoutMs: number;
     readonly #people = new WeakMap<IncomingMessage, string>();
 
@@ -85,15 +122,21 @@ export class ExternalAuth {
             typeof provider.authenticate !== "function" ||
             typeof policy.owner !== "string" ||
             policy.owner.length === 0 ||
-            !Array.isArray(policy.guests) ||
-            !policy.guests.every((subject) => typeof subject === "string" && subject.length > 0) ||
+            (policy.guests !== undefined &&
+                (!Array.isArray(policy.guests) ||
+                    !policy.guests.every(
+                        (subject) => typeof subject === "string" && subject.length > 0,
+                    ))) ||
+            (policy.guestCapability !== undefined &&
+                (typeof policy.guestCapability !== "string" ||
+                    !capabilityName.test(policy.guestCapability))) ||
             new URL(policy.origin).origin !== policy.origin
         ) {
             throw new Error("Invalid external authentication configuration");
         }
 
         this.#provider = provider;
-        this.#policy = { ...policy, guests: [...policy.guests] };
+        this.#policy = { ...policy, guests: [...(policy.guests ?? [])] };
         this.#timeoutMs = timeoutMs;
     }
 
@@ -115,11 +158,14 @@ export class ExternalAuth {
             throw new HttpError(503, "External authentication unavailable");
         }
 
+        // The owner is the exact subject alone. A guest is listed or, on this request, holds the capability:
+        // losing it denies the next request but keeps the native person and binding for when it returns.
         if (
             typeof principal?.subject !== "string" ||
             principal.subject.length === 0 ||
             (principal.subject !== this.#policy.owner &&
-                !this.#policy.guests.includes(principal.subject))
+                !this.#policy.guests.includes(principal.subject) &&
+                !grantsGuest(principal, this.#policy.guestCapability))
         ) {
             throw new HttpError(403, "External identity not admitted");
         }

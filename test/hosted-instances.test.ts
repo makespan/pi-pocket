@@ -14,7 +14,10 @@ const { PocketApp } = await import("../src/server/app.ts");
 const alice = "alice@example.com";
 const bob = "bob@example.com";
 const mounts = ["/alice.name", "/bob.name"] as const;
+const guestCapability = "example.com/cap/pi-pocket";
 let identity: string | undefined = alice;
+/** Whether the tailnet grants the verified person the guest capability (both are in the granted group). */
+let capabilityGranted = true;
 let apps: App[] = [];
 let gateway: Server;
 let base = "";
@@ -23,8 +26,11 @@ const provider: AuthProvider = {
     id: "hosted-test-gateway",
     async authenticate(request) {
         const subject = request.headers["test-verified-identity"];
+        const capabilities: Record<string, unknown[]> = capabilityGranted
+            ? { [guestCapability]: [{ role: "guest" }] }
+            : {};
 
-        return typeof subject === "string" ? { subject, name: subject } : undefined;
+        return typeof subject === "string" ? { subject, name: subject, capabilities } : undefined;
     },
 };
 
@@ -73,11 +79,8 @@ before(async () => {
         handlers.push(
             createHandler({
                 app: apps[index]!,
-                externalAuth: new ExternalAuth(provider, {
-                    owner,
-                    guests: [owner === alice ? bob : alice],
-                    origin: base,
-                }),
+                // No guest list: the capability admits the other developer as a guest.
+                externalAuth: new ExternalAuth(provider, { owner, guestCapability, origin: base }),
                 listen: { host: "127.0.0.1", port: 0 },
                 restart: () => {},
             }),
@@ -127,6 +130,11 @@ test("one verified identity is its own owner and a separate native guest on anot
         403,
     );
     assert.equal((await fetch(base + mounts[1] + "/api/me", mutation(base))).status, 200);
+    capabilityGranted = false;
+    assert.equal((await fetch(base + mounts[1] + "/api/me")).status, 403, "left the group");
+    assert.equal((await fetch(base + mounts[0] + "/api/me")).status, 200, "still owner");
+    capabilityGranted = true;
+    assert.equal((await (await fetch(base + mounts[1] + "/api/me")).json()).user.id, other.user.id);
     apps[1]!.removeUser(
         apps[1]!.config.users.find((user) => user.role === "owner")!,
         other.user.id,
