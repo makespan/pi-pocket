@@ -1,7 +1,9 @@
 // The app's icons in the colors in use: the tab's icon (an SVG drawn here) and the home-screen icon (`apple-touch-icon`,
 // which iOS and Android's "add to home screen" shortcut read; the server draws its PNG). The files in this folder
 // (`icon.svg` and its PNGs) are the first load's icons, and stay where this module does not run. The web app manifest's icons
-// follow the same cookie: the server answers `/manifest.webmanifest` with them.
+// follow the same cookie: the server answers `/manifest.webmanifest` with them. Under a base path every address, and the
+// cookie's name and path, are this mount's (`base-path.js`).
+import { appUrl, basePath, iconCookieName } from "./base-path.js";
 
 const SIZE = 512;
 const APPLE = 180;
@@ -63,14 +65,14 @@ const homeIconUrl = (vars) => {
         size: String(APPLE),
     });
 
-    return `/app-icon.png?${query}`;
+    return appUrl(`/app-icon.png?${query}`);
 };
 
 /**
  * The colors in a cookie, `frame.card.ring1.ring2.pi` in hex: iOS may read the icon from the page as it is served, before
  * any script runs, so the server puts the address in the page from this cookie (`src/server/http/icon-route.ts`).
  */
-const COOKIE = "pocket_icon";
+const COOKIE = iconCookieName(basePath);
 const cookieValue = (vars) =>
     ["--o-bg-darker", "--o-bg", "--o-cyan", "--o-green", "--o-orange"]
         .map((name) => hex(vars, name))
@@ -98,7 +100,7 @@ function setLink(rel, href, type) {
  */
 async function reportToServer(colors) {
     try {
-        const response = await fetch("/api/app-icon", {
+        const response = await fetch(appUrl("/api/app-icon"), {
             method: "PUT",
             headers: { "X-Pocket": "1", "content-type": "application/json" },
             body: JSON.stringify({ colors }),
@@ -141,7 +143,7 @@ export function applyIcons(vars) {
     setLink("icon", svgUrl(iconSvg(vars)), "image/svg+xml");
     setLink("apple-touch-icon", homeIconUrl(vars));
     colorsInUse = cookieValue(vars);
-    document.cookie = `${COOKIE}=${colorsInUse}; path=/; max-age=31536000; samesite=lax`;
+    document.cookie = `${COOKIE}=${colorsInUse}; path=${appUrl("/")}; max-age=31536000; samesite=lax`;
 
     if (reports) {
         void reportToServer(colorsInUse);

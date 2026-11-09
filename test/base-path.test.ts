@@ -17,7 +17,13 @@ import { createServer, request, type Server } from "node:http";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { after, before, test } from "node:test";
-import { appPath, loginNext, parseBasePath, requestPath } from "../src/base-path.ts";
+import {
+    appPath,
+    iconCookieName,
+    loginNext,
+    parseBasePath,
+    requestPath,
+} from "../src/base-path.ts";
 import { PocketApp } from "../src/server/app.ts";
 import { authCookieName } from "../src/server/auth.ts";
 import { importProblems } from "../src/server/gallery/share.ts";
@@ -329,6 +335,77 @@ test("root and mounted pages have prefix-aware assets, import maps, CSP hashes, 
         const login = await fetch(origin + app.url("/login?token=invalid"));
 
         assert.ok((await login.text()).includes(`href="${app.url("/style.css")}"`));
+    }
+});
+
+test("each mount's home-screen icon has its own cookie, and its page, manifest and icon addresses stay in the mount", async () => {
+    const web = (await import(new URL("../web/base-path.js", import.meta.url).href)) as {
+        iconCookieName(basePath: string): string;
+    };
+    const rootColors = "111.222.333.444.555";
+    const mountColors = "202030.303040.33ccff.00ff99.ff8800";
+
+    for (const app of apps) {
+        const name = iconCookieName(app.basePath);
+
+        assert.equal(
+            web.iconCookieName(app.basePath),
+            name,
+            "the browser names it as the server does",
+        );
+        assert.equal(name === "pocket_icon", app.basePath === "");
+
+        // A root instance's cookie (path `/`) reaches every mount on the origin: only the mount's own counts.
+        const headers = (cookie: string) => ({ headers: { cookie } });
+        const own =
+            app.basePath === ""
+                ? `pocket_icon=${mountColors}`
+                : `pocket_icon=${rootColors}; ${name}=${mountColors}`;
+        const plain = await (
+            await fetch(
+                origin + app.url("/manifest.webmanifest"),
+                headers(`pocket_icon=${rootColors}`),
+            )
+        ).json();
+
+        if (app.basePath !== "") {
+            assert.ok(
+                plain.icons.every((icon: { src: string }) => !icon.src.includes("app-icon.png")),
+                "a root cookie colors no mounted manifest",
+            );
+        }
+
+        const colored = await (
+            await fetch(origin + app.url("/manifest.webmanifest"), headers(own))
+        ).json();
+
+        assert.equal(colored.theme_color, "#202030");
+        assert.equal(colored.scope, app.url("/"));
+        assert.ok(
+            colored.icons.every((icon: { src: string }) =>
+                icon.src.startsWith(app.url("/app-icon.png?frame=202030")),
+            ),
+            JSON.stringify(colored.icons),
+        );
+
+        const page = await fetch(origin + app.url("/"), headers(own));
+        const html = await page.text();
+        const touch = /<link rel="apple-touch-icon" href="([^"]+)" \/>/.exec(html)?.[1] ?? "";
+
+        assert.ok(touch.startsWith(app.url("/app-icon.png?frame=202030")), touch);
+
+        for (const match of html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g)) {
+            const hash = createHash("sha256")
+                .update(match[1]!.replace(/\r\n?/g, "\n"))
+                .digest("base64");
+
+            assert.ok(page.headers.get("content-security-policy")?.includes(`'sha256-${hash}'`));
+        }
+
+        const icon = await fetch(origin + touch.replaceAll("&amp;", "&"));
+
+        assert.equal(icon.status, 200);
+        assert.equal(icon.headers.get("content-type"), "image/png");
     }
 });
 

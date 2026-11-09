@@ -1,6 +1,7 @@
 // People's avatars: their initials in a color of the theme, the same color for the same person everywhere; and the
 // colors of folders, which mark their sessions the same way.
 
+import { appUrl } from "./base-path.js";
 import { store } from "./store.js";
 import { html } from "./ui.js";
 
@@ -76,7 +77,9 @@ export function avatarSrc(person) {
     const version =
         person?.avatar ?? store.state.users.find((each) => each.id === person?.id)?.avatar;
 
-    return version ? `/api/avatar/${encodeURIComponent(person.id)}?v=${version}` : undefined;
+    return version
+        ? appUrl(`/api/avatar/${encodeURIComponent(person.id)}?v=${version}`)
+        : undefined;
 }
 
 /** A picture file as the small square PNG that is sent: its middle, cropped, at 192px. */

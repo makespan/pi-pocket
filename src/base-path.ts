@@ -16,6 +16,14 @@ export function parseBasePath(value = ""): string {
     return value;
 }
 
+/**
+ * The icon colors cookie's name: `pocket_icon` at the root, one of the mount's own under a base path (`~` for `/`, which
+ * a base path never contains otherwise). `web/base-path.js` names it the same way.
+ */
+export function iconCookieName(basePath: string): string {
+    return basePath === "" ? "pocket_icon" : `pocket_icon${basePath.replaceAll("/", "~")}`;
+}
+
 /** Add the mount point to an app-owned root-relative path, exactly once at its generation site. */
 export function appPath(basePath: string, path: string): string {
     if (!path.startsWith("/") || path.startsWith("//")) {

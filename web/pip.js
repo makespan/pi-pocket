@@ -1,5 +1,6 @@
 import {
     appRoute,
+    appUrl,
     localStore as localStorage,
     sessionStore as sessionStorage,
 } from "./base-path.js";
@@ -600,25 +601,37 @@ const written = (text) => text.replace(/^\[from: [^\]\n]{1,60}\] /, "");
 
 /**
  * PiP's words with bare session addresses (`/s/12`, as reports and tool results write them) made links named after
- * their sessions. Links already written stay as they are.
+ * their sessions, to this mount's address of each (`appUrl`). Links already written stay as they are.
  */
 function linkSessions(text) {
     // What sessions said comes fenced for PiP (`pip.ts`); people read it as it is.
     text = text.replace(/\n?<\/?session-output>\n?/g, "\n");
     // `“Title” (/s/12)`, as reports name a session: one link.
-    const named = text.replace(/“([^”\n[\]]{1,120})” \(\/s\/(\d+)\)/g, "[$1](/s/$2)");
+    const named = text.replace(
+        /“([^”\n[\]]{1,120})” \(\/s\/(\d+)\)/g,
+        (_, title, id) => `[${title}](${appUrl(`/s/${id}`)})`,
+    );
 
-    return named.replace(/(?<!\]\()(?<![\w/.])\/s\/(\d+)\b(?![\w/])/g, (_, id) => {
+    // Not again inside a link made above: a base path may end in `-` (`/team-/s/12`).
+    return named.replace(/(?<!\]\()(?<![\w/.-])\/s\/(\d+)\b(?![\w/])/g, (_, id) => {
         const title = store.state.sessions.find((session) => session.id === Number(id))?.title;
         const label = (title ?? `/s/${id}`).replace(/[[\]]/g, "");
 
-        return `[${label}](/s/${id})`;
+        return `[${label}](${appUrl(`/s/${id}`)})`;
     });
 }
 
-/** The session a link in PiP's words opens: `/s/12`, written whole or as an address of this app. */
+/**
+ * The session a link in PiP's words opens: `/s/12` as PiP writes it (an app route, whatever the mount), or an address
+ * of this app.
+ */
 function sessionOf(anchor) {
     const href = anchor.getAttribute("href") ?? "";
+    const route = /^\/s\/(\d+)\/?$/.exec(href);
+
+    if (route) {
+        return Number(route[1]);
+    }
 
     try {
         const url = new URL(href, location.origin);

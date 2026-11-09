@@ -77,7 +77,7 @@ export async function pushRoutes(api: ApiRequest, action: string | undefined): P
         const test = {
             title: "Pi Pocket",
             body: `Notifications work on this device, ${user.name}.`,
-            url: "/",
+            url: app.url("/"),
             tag: "test",
         };
         const sent =

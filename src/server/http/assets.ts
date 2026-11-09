@@ -323,7 +323,7 @@ export function serveManifest(
     dataDir: string,
 ): void {
     const file = readFileSync(join(WEB, "manifest.webmanifest"), "utf8");
-    const manifest = JSON.parse(manifestFor(request, file, dataDir) ?? file);
+    const manifest = JSON.parse(manifestFor(request, file, dataDir, basePath) ?? file);
 
     manifest.id = appPath(basePath, "/");
     manifest.start_url = appPath(basePath, "/");

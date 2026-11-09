@@ -1,6 +1,6 @@
 /** `/app-icon.png?frame=&card=&ring1=&ring2=&pi=&size=&maskable=1`: the app icon in those colors (hex, no `#`), as `icon-render.ts` draws it. */
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { appPath } from "../../base-path.ts";
+import { appPath, iconCookieName } from "../../base-path.ts";
 import { HttpError } from "../errors.ts";
 import { storedIconColors } from "../icon-store.ts";
 import { APP_ICON, type IconColors, MIN_ICON, renderIcon } from "../icon-render.ts";
@@ -97,13 +97,26 @@ export function iconRoute(request: IncomingMessage, response: ServerResponse, ur
     response.end(request.method === "HEAD" ? undefined : png);
 }
 
-const HEX = "(?:[0-9a-f]{3}|[0-9a-f]{6})";
-const COOKIE = new RegExp(`(?:^|;\\s*)pocket_icon=(${HEX}(?:\\.${HEX}){4})(?:;|$)`, "i");
+const HEX = "(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})";
+/** The cookie of this mount (`iconCookieName`): a root instance's `pocket_icon` is not a mounted one's. */
+const cookiePattern = (basePath: string) =>
+    new RegExp(
+        `(?:^|;\\s*)${iconCookieName(basePath).replaceAll(".", "\\.")}=(${HEX}(?:\\.${HEX}){4})(?:;|$)`,
+    );
 
-/** The colors in the request's `pocket_icon` cookie (`frame.card.ring1.ring2.pi`, which `web/app-icon.js` keeps), or null. */
-function cookieColors(request: IncomingMessage, dataDir: string): string[] | null {
+/**
+ * The colors in the request's icon cookie (`frame.card.ring1.ring2.pi`, which `web/app-icon.js` keeps for this mount),
+ * else the owner's, or null.
+ */
+function cookieColors(
+    request: IncomingMessage,
+    dataDir: string,
+    basePath: string,
+): string[] | null {
     return (
-        COOKIE.exec(request.headers.cookie ?? "")?.[1]?.split(".") ??
+        cookiePattern(basePath)
+            .exec(request.headers.cookie ?? "")?.[1]
+            ?.split(".") ??
         storedIconColors(dataDir) ??
         null
     );
@@ -114,8 +127,9 @@ export function appleTouchIcon(
     request: IncomingMessage,
     response: ServerResponse,
     dataDir: string,
+    basePath = "",
 ): boolean {
-    const colors = cookieColors(request, dataDir);
+    const colors = cookieColors(request, dataDir, basePath);
 
     if (colors === null) {
         return false;
@@ -164,7 +178,7 @@ export function iconAddress(
     dataDir: string,
     basePath = "",
 ): string | null {
-    const colors = cookieColors(request, dataDir);
+    const colors = cookieColors(request, dataDir, basePath);
 
     return colors === null ? null : appPath(basePath, address(colors, 180));
 }
@@ -177,8 +191,9 @@ export function manifestFor(
     request: IncomingMessage,
     file: string,
     dataDir: string,
+    basePath = "",
 ): string | null {
-    const colors = cookieColors(request, dataDir);
+    const colors = cookieColors(request, dataDir, basePath);
 
     if (colors === null) {
         return null;

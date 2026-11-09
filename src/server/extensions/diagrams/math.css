@@ -1,1 +1,2 @@
-@import url("/vendor/katex.css");
+/* KaTeX's stylesheet, relative to this file (`/x/diagrams/<rev>/math.css`), so that a base path keeps it. */
+@import url("../../../vendor/katex.css");

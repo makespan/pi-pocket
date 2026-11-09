@@ -1,3 +1,4 @@
+import { appUrl } from "#pocket/base-path";
 import DOMPurify from "dompurify";
 
 const MAX_DIAGRAM_SOURCE_LENGTH = 50_000;
@@ -144,9 +145,9 @@ function renderMath(katex, source, display) {
 export default function (pocket) {
     const { h, useEffect, useRef, useState } = pocket;
     const runtime = { active: true, pele: null, katex: null, katexStyle: false };
-    const loadPele = () => (runtime.pele ??= import("/vendor/pele.mjs"));
+    const loadPele = () => (runtime.pele ??= import(appUrl("/vendor/pele.mjs")));
     const loadKatex = () =>
-        (runtime.katex ??= import("/vendor/katex.mjs").then((module) => {
+        (runtime.katex ??= import(appUrl("/vendor/katex.mjs")).then((module) => {
             if (runtime.active && !runtime.katexStyle) {
                 pocket.style("math.css");
                 runtime.katexStyle = true;

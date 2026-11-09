@@ -1,4 +1,6 @@
 // Browser-local content belongs to a person, never to the next account that uses this browser.
+import { localStore } from "./base-path.js";
+
 const PREFIX = "pocket.person.";
 
 /** What `history.js` keeps for a person, and how many records. */
@@ -11,7 +13,7 @@ const legacy = (key) =>
     /^(pocket\.(draft\.|pastes\.|attached\.|viewed\.|history(?:$|\.)|pip\.draft$))/.test(key);
 
 /** A blocked/full store keeps changes in memory, including deletions that would otherwise reveal an older value. */
-export function createPersonStorage(storage = () => localStorage) {
+export function createPersonStorage(storage = () => localStore) {
     let person = null;
     let locked = true;
     const pending = new Map();

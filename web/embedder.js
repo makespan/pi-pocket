@@ -1,5 +1,6 @@
 // What Pi Pocket does with the app bridge an embedder gives it (`web/host.js`): notifications, badge, pinned sessions,
 // links, and the embedder's menu group. docs/embedders.md describes it.
+import { appRoute, appUrl } from "./base-path.js";
 import { callHost, host, hostCan, onHost } from "./host.js";
 import { openPip } from "./pip.js";
 import { sessionMark } from "./sessions.js";
@@ -12,7 +13,7 @@ export function openAddress(address) {
     let url;
 
     try {
-        url = new URL(String(address ?? "/"), location.origin);
+        url = new URL(String(address ?? appUrl("/")), location.origin);
     } catch {
         return;
     }
@@ -27,7 +28,8 @@ export function openAddress(address) {
         return;
     }
 
-    const match = /^\/s\/(\d+)$/.exec(url.pathname);
+    // An address of this mount (`appUrl`), as the pinned sessions and notifications give it.
+    const match = /^\/s\/(\d+)$/.exec(appRoute(url.pathname) ?? "");
 
     navigate(match ? Number(match[1]) : null);
 }
@@ -81,7 +83,7 @@ if (host !== null) {
                         // The square's shape (`fresh`/`seen`), not the row's theme state (`done`/`idle`).
                         state: mark.shape.split(" ")[0],
                         label: mark.label,
-                        url: `/s/${session.id}`,
+                        url: appUrl(`/s/${session.id}`),
                     };
                 });
             const json = JSON.stringify(pinned);

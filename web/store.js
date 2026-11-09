@@ -1,5 +1,6 @@
 import {
     storageEventKey,
+    storageKey,
     appUrl,
     appRoute,
     localStore as localStorage,
@@ -880,9 +881,12 @@ export async function attempt(action) {
 
 const PERSON_KEY = "pocket.person";
 const SIGNED_OUT_KEY = "pocket.signedOut";
-// Also works when this browser blocks localStorage. No saved content travels on this channel.
+// Also works when this browser blocks localStorage. No saved content travels on this channel. A mounted instance
+// (`base-path.js`) has a channel of its own: another instance on this origin is another server with other accounts.
 const accountChannel =
-    typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel("pocket.account");
+    typeof BroadcastChannel === "undefined"
+        ? null
+        : new BroadcastChannel(storageKey("pocket.account"));
 let changingAccount = false;
 let signingOut = false;
 let accountGeneration = 0;
@@ -931,7 +935,7 @@ function accountChanged(person, signedOut = false) {
 // The early sign-out signal only stops the device cache (below): a reload then would still find the old cookie.
 // The person key changes once the server ends the sign-in.
 addEventListener("storage", (event) => {
-    if (event.key === PERSON_KEY) {
+    if (storageEventKey(event.key) === PERSON_KEY) {
         accountChanged(event.newValue || null);
     }
 });
@@ -1210,7 +1214,7 @@ const onDevice = () =>
 let deviceCacheStopped = false;
 
 addEventListener("storage", (event) => {
-    if (event.key === SIGNED_OUT_KEY) {
+    if (storageEventKey(event.key) === SIGNED_OUT_KEY) {
         deviceCacheStopped = true;
         dispatchEvent(new Event("pocket:signedOut"));
     }

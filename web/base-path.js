@@ -15,6 +15,13 @@ export function appRoute(pathname) {
     return pathname.startsWith(basePath + "/") ? pathname.slice(basePath.length) : null;
 }
 
+/**
+ * The icon colors cookie's name (`app-icon.js`): `pocket_icon` at the root, and one of this mount's own under a base path,
+ * so that a root instance's cookie (path `/`) is never read by a mounted one. `src/base-path.ts` names it the same way.
+ */
+export const iconCookieName = (base) =>
+    base === "" ? "pocket_icon" : `pocket_icon${base.replaceAll("/", "~")}`;
+
 /** Root installations retain their existing keys. Prefixed instances never read or migrate root state. */
 export const storageKey = (key) => (basePath ? `pocket@${basePath}:` : "") + key;
 export const shareCache = storageKey("pocket-share");

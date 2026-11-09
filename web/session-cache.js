@@ -8,8 +8,10 @@
  * Two stores, by conversation id: `views` holds each session's view, `info` what to keep or drop it by, small enough to
  * read all of at once: `{ id, owner, build, size, usedAt }`.
  */
+import { storageKey } from "./base-path.js";
 
-const NAME = "pocket-sessions";
+// A mounted instance (`base-path.js`) keeps a database of its own: other instances on this origin are other servers.
+const NAME = storageKey("pocket-sessions");
 
 /** How long an open may take before the cache counts as nothing kept: some browsers never answer. */
 const OPEN_MS = 1000;

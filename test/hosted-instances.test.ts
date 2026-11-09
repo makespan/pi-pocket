@@ -22,6 +22,10 @@ let apps: App[] = [];
 let gateway: Server;
 let base = "";
 let browsers: Browsers | undefined;
+/** Requests that reached the gateway outside every mount: a browser that leaks a root-relative address. */
+const outside: string[] = [];
+/** Every request the gateway received, as `METHOD /path?query`. */
+const requests: string[] = [];
 const provider: AuthProvider = {
     id: "hosted-test-gateway",
     async authenticate(request) {
@@ -63,7 +67,10 @@ before(async () => {
 
         const mount = mounts.findIndex((prefix) => request.url?.startsWith(prefix + "/"));
 
+        requests.push(`${request.method} ${request.url}`);
+
         if (mount < 0) {
+            outside.push(`${request.method} ${request.url}`);
             response.writeHead(404);
             response.end();
 
@@ -193,6 +200,7 @@ test(
     { skip: findBrowser() === undefined ? "no Chromium-based browser" : false },
     async () => {
         identity = bob;
+        outside.length = 0;
         browsers = new Browsers({
             dataDir: mkdtempSync(join(root, "hosted-browser-")),
             load: async () => undefined,
@@ -246,6 +254,154 @@ test(
             ),
             mounts[0],
         );
+        assert.deepEqual(outside, [], "no request leaves the mounts");
         assert.deepEqual(errors, []);
+    },
+);
+
+test(
+    "a real browser on a mounted, externally authenticated instance uses 0.28's fetching UI without a request outside its mount",
+    { skip: findBrowser() === undefined ? "no Chromium-based browser" : false },
+    async () => {
+        const mount = mounts[0];
+
+        identity = alice;
+        outside.length = 0;
+        browsers ??= new Browsers({
+            dataDir: mkdtempSync(join(root, "hosted-browser-")),
+            load: async () => undefined,
+            save: () => {},
+        });
+        const page = await browsers.open(2);
+        const inPage = async <T>(script: string): Promise<T> =>
+            JSON.parse(await page.evaluate(script)) as T;
+        const fetched = () =>
+            inPage<string[]>(
+                `return JSON.stringify(performance.getEntriesByType("resource").map((each) => new URL(each.name).pathname));`,
+            );
+
+        await page.setViewport({ width: 1280, height: 800, scale: 1, mobile: false });
+        await page.navigate(base + mount + "/");
+        await until(
+            () =>
+                inPage<boolean>(`
+                    const { store } = await import(${JSON.stringify(mount + "/store.js")});
+                    return JSON.stringify(store.state.me?.role === "owner" && store.state.connection === "open");
+                `),
+            "the owner, signed in by the gateway, with a live connection",
+        );
+        // The board asks every two seconds: past the browser's default 250 entries, later ones would go unlisted.
+        await page.evaluate(`performance.setResourceTimingBufferSize(100000); return "{}";`);
+
+        // The Running now board asks the server for what runs, every two seconds while it shows.
+        await page.evaluate(`
+            const { openRunning } = await import(${JSON.stringify(mount + "/store.js")});
+            openRunning();
+            return "{}";
+        `);
+        await until(
+            async () =>
+                (await inPage<boolean>(
+                    `return JSON.stringify(document.querySelector(".running-board") !== null);`,
+                )) && (await fetched()).includes(mount + "/api/running/board"),
+            "the Running now board, from this mount's API",
+        );
+
+        // Diagrams and math: the built-in diagrams client loads Pele, KaTeX, and KaTeX's stylesheet and fonts lazily.
+        await until(
+            () =>
+                inPage<boolean>(`
+                    const markdown = await import(${JSON.stringify(mount + "/markdown-ext.js")});
+                    return JSON.stringify(["mermaid", "math"].every((lang) => markdown.fenceFor(lang)));
+                `),
+            "the diagrams client's fences",
+        );
+        await page.evaluate(`
+            const markdown = await import(${JSON.stringify(mount + "/markdown-ext.js")});
+            const { h, render } = await import("preact");
+            for (const [lang, source] of [["mermaid", "flowchart LR\\n  A --> B"], ["math", "x^2 + \\\\sqrt{y}"]]) {
+                const host = document.body.appendChild(document.createElement("div"));
+                host.className = "hosted-fence-" + lang;
+                render(h(markdown.fenceFor(lang).component, { source, lang, streaming: false }), host);
+            }
+            return "{}";
+        `);
+        await until(async () => {
+            const paths = await fetched();
+
+            return ["/vendor/pele.mjs", "/vendor/katex.mjs", "/vendor/katex.css"].every((path) =>
+                paths.includes(mount + path),
+            );
+        }, "Pele, KaTeX and its stylesheet, from this mount");
+        await until(
+            () =>
+                inPage<boolean>(
+                    `return JSON.stringify(document.querySelector(".hosted-fence-math .katex") !== null && document.querySelector(".hosted-fence-mermaid svg") !== null);`,
+                ),
+            "the rendered diagram and formula",
+        );
+
+        // The home-screen icon in the owner's colors: its address, its cookie, and the colors the owner's browser reports.
+        const icon = await inPage<{ link: string; cookie: string }>(`
+            const { applyIcons, reportIconsAs } = await import(${JSON.stringify(mount + "/app-icon.js")});
+            reportIconsAs(true);
+            applyIcons({ "--o-bg-darker": "#202030", "--o-orange": "#ff8800" });
+            return JSON.stringify({
+                link: document.querySelector('link[rel="apple-touch-icon"]').getAttribute("href"),
+                cookie: document.cookie,
+            });
+        `);
+
+        assert.ok(icon.link.startsWith(mount + "/app-icon.png?"), icon.link);
+        assert.match(icon.cookie, /(^|; )pocket_icon~alice\.name=/, icon.cookie);
+        assert.doesNotMatch(icon.cookie, /(^|; )pocket_icon=/, "no root icon cookie");
+        await until(
+            async () => requests.includes(`PUT ${mount}/api/app-icon`),
+            "the owner's icon colors, sent to this mount",
+        );
+        // The manifest and the home-screen page carry the colors of this mount's cookie, at this mount's addresses.
+        const manifest = await inPage<{ icons: { src: string }[]; theme_color: string }>(`
+            return JSON.stringify(await (await fetch(${JSON.stringify(mount + "/manifest.webmanifest")})).json());
+        `);
+
+        assert.equal(manifest.theme_color, "#202030");
+        assert.ok(
+            manifest.icons.every((each) => each.src.startsWith(mount + "/app-icon.png?")),
+            JSON.stringify(manifest.icons),
+        );
+
+        // An avatar's address (`avatar.js`), made without fetching it.
+        const avatar = await inPage<string>(`
+            const { avatarSrc } = await import(${JSON.stringify(mount + "/avatar.js")});
+            return JSON.stringify(avatarSrc({ id: "someone", avatar: 3 }));
+        `);
+
+        assert.ok(avatar.startsWith(mount + "/api/avatar/"), avatar);
+
+        // What the browser keeps for mounted instances is under their prefix only: Web Storage keys and databases.
+        const kept = await inPage<{ keys: string[]; databases: string[] }>(`
+            return JSON.stringify({
+                keys: [...Object.keys(localStorage), ...Object.keys(sessionStorage)],
+                databases: (await indexedDB.databases()).map((each) => each.name),
+            });
+        `);
+
+        assert.ok(kept.keys.length > 0, JSON.stringify(kept));
+        assert.deepEqual(
+            [...kept.keys, ...kept.databases].filter(
+                (key) => !mounts.some((each) => key.startsWith(`pocket@${each}:`)),
+            ),
+            [],
+            "no unscoped browser state",
+        );
+
+        const paths = await fetched();
+
+        assert.deepEqual(
+            paths.filter((path) => !path.startsWith(mount + "/")),
+            [],
+            "every resource the page fetched is this mount's",
+        );
+        assert.deepEqual(outside, [], "no request reached the gateway outside the mounts");
     },
 );

@@ -1,4 +1,5 @@
 // Model favorites belong to this person in this browser, independently of subagent permissions.
+import { localStore as localStorage } from "./base-path.js";
 import { store } from "./store.js";
 
 const key = () => `pocket.modelFavorites.${store.state.me?.id ?? ""}`;

@@ -3,6 +3,7 @@
  * entry, and the model still reads the message in full. The choice lives in this browser, under a `pocket.` key: Pi
  * Pocket does not write `x.` keys.
  */
+import { localStore, storageEventKey } from "./base-path.js";
 
 /** Where this browser keeps each kind's mode. */
 export const PRESENTATION_STORAGE_KEY = "pocket.entryPresentation";
@@ -74,10 +75,13 @@ export function promptBefore(entryId, view) {
 
 const isMode = (value) => PRESENTATION_MODES.includes(value);
 
-/** This browser's storage, or undefined where it is blocked: reading `localStorage` itself can throw. */
+/**
+ * This browser's storage, as this mount keeps it (`base-path.js`), or undefined where it is blocked: reading
+ * `localStorage` itself can throw.
+ */
 function browserStorage() {
     try {
-        return globalThis.localStorage ?? undefined;
+        return globalThis.localStorage === undefined ? undefined : localStore;
     } catch {
         return undefined;
     }
@@ -201,7 +205,9 @@ export function modulePresentationMode(kind, { storage = browserStorage(), modul
 
 /** Another tab of this browser stored a choice (a `storage` event): this one shows it too. */
 export function storageChanged(event, storage = browserStorage()) {
-    if (event.key !== PRESENTATION_STORAGE_KEY && event.key !== null) {
+    const key = storageEventKey(event.key);
+
+    if (key !== PRESENTATION_STORAGE_KEY && key !== null) {
         return;
     }
 
