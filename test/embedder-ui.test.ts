@@ -53,10 +53,11 @@ const preload = `<script>
     });
     Object.defineProperty(navigator, "windowControlsOverlay", { value: overlay });
 </script>`;
-const index = readFileSync(new URL("../web/index.html", import.meta.url), "utf8").replace(
-    "<head>",
-    `<head>${preload}`,
-);
+// The page as the server serves it at the root (`serveApp`: no base path), without its policy, which the preload breaks.
+const index = readFileSync(new URL("../web/index.html", import.meta.url), "utf8")
+    .replaceAll("__POCKET_BASE_JSON__", '""')
+    .replaceAll("__POCKET_BASE__", "")
+    .replace("<head>", `<head>${preload}`);
 let app: App;
 let server: Server;
 let browsers: Browsers;

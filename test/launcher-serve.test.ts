@@ -607,6 +607,11 @@ async function launchLocal(data: string, port: number, access = "local"): Promis
             copyFileSync(join(repo, "src", "server", file), join(root, "src", "server", file));
         }
 
+        // The launcher's options read the base path and the socket path with the server's own parsers.
+        for (const file of ["base-path.ts", "socket-path.ts"]) {
+            copyFileSync(join(repo, "src", file), join(root, "src", file));
+        }
+
         symlinkSync(join(repo, "node_modules"), join(root, "node_modules"));
         writeFileSync(
             join(root, "src", "server", "main.ts"),
