@@ -206,6 +206,8 @@ const revokedIn = (read: Read, provenance: Provenance | ThemeProvenance) =>
 export class Gallery {
     /** How the gallery reaches other sites: tests and local copies stand in for it. */
     fetch: Fetcher = (url, init) => fetch(url, init);
+    /** The owner's GitHub token for private indexes and repositories (the gallery module sets it); none at first. */
+    githubToken: () => Promise<string | undefined> = async () => undefined;
     readonly #app: PocketApp;
     #settings: { index: string } | undefined;
     #read: Read | undefined;
@@ -341,7 +343,10 @@ export class Gallery {
 
     async #fetchIndex(address: string): Promise<Read> {
         const url = indexUrl(address);
-        const bytes = await download(this.fetch, url, LIMITS.index, "The index");
+        const token = await this.githubToken();
+        const bytes = await download(this.fetch, url, LIMITS.index, "The index", {
+            ...(token ? { token } : {}),
+        });
         const text = textOf(bytes);
         let index: Index;
 
@@ -420,6 +425,7 @@ export class Gallery {
         signal?: AbortSignal,
     ): Promise<Fetched[]> {
         const files: Fetched[] = [];
+        const token = await this.githubToken();
 
         for (const file of entry.files) {
             const mismatch = () =>
@@ -434,6 +440,7 @@ export class Gallery {
                 file.name,
                 {
                     ...(signal === undefined ? {} : { signal }),
+                    ...(token ? { token } : {}),
                     large: mismatch,
                     sameHost: true,
                 },
