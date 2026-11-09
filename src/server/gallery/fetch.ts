@@ -7,22 +7,31 @@ import { describe, HttpError } from "../errors.ts";
 /** How long one request to another site may take. */
 const REQUEST_MS = 20_000;
 
+/** The only hosts that get the owner's GitHub token: GitHub's own, over https. Checked again on each redirect. */
+const GITHUB_HOSTS = new Set(["github.com", "api.github.com", "raw.githubusercontent.com"]);
+
 /** How the gallery reaches other sites, as `fetch` does: tests and local copies stand in for it. */
 export type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
 
 /**
  * Get `url`'s body, `limit` bytes at most: https only, also where it redirects to (three times at most, and only on its
  * own host when `sameHost`), each request within `REQUEST_MS`, through `fetcher`. `what` names it in errors; `large` is
- * the error for a body past `limit`.
+ * the error for a body past `limit`. `token`, a GitHub token, goes only to GitHub's hosts (`GITHUB_HOSTS`), so a private
+ * index or repository can be read; a redirect to any other host gets no token.
  */
 export async function download(
     fetcher: Fetcher,
     url: string,
     limit: number,
     what: string,
-    options: { signal?: AbortSignal; large?: () => HttpError; sameHost?: boolean } = {},
+    options: {
+        signal?: AbortSignal;
+        large?: () => HttpError;
+        sameHost?: boolean;
+        token?: string;
+    } = {},
 ): Promise<Uint8Array> {
-    const { signal, sameHost = false } = options;
+    const { signal, sameHost = false, token } = options;
     const large =
         options.large ?? (() => new HttpError(502, `${what} is larger than ${limit} bytes`));
     const host = new URL(url).host;
@@ -53,7 +62,12 @@ export async function download(
             response = await fetcher(address, {
                 redirect: "manual",
                 signal: stop,
-                headers: { "user-agent": "pi-pocket" },
+                headers: {
+                    "user-agent": "pi-pocket",
+                    ...(token && GITHUB_HOSTS.has(target.host)
+                        ? { authorization: `Bearer ${token}` }
+                        : {}),
+                },
             });
         } catch (error) {
             const cause = (error as { cause?: unknown }).cause;
@@ -81,9 +95,17 @@ export async function download(
         if (!response.ok) {
             await response.body?.cancel().catch(() => {});
 
+            // GitHub answers 404 for a private repository that it is not shown: say what reads one.
+            const hint =
+                response.status === 404 && GITHUB_HOSTS.has(target.host)
+                    ? token
+                        ? ". If the repository is private, check that the GitHub token can read it"
+                        : ". If the repository is private, give the gallery a GitHub token in its settings (Menu → Extensions → Extension gallery)"
+                    : "";
+
             throw new HttpError(
                 502,
-                `${what}: ${target.host} answered ${response.status} for ${target.pathname}`,
+                `${what}: ${target.host} answered ${response.status} for ${target.pathname}${hint}`,
             );
         }
 

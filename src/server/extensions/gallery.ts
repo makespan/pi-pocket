@@ -4,6 +4,8 @@
  * owner's alone; the web app shows it in Menu → Extensions and as the launcher's Find extensions (`gallery.ts` does the
  * work).
  */
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { defineExtension } from "@earendil-works/pi-durable";
 import { HttpError } from "../errors.ts";
 import type { ExtensionWeb, PocketHost, WebHandler, WebRequest } from "../host.ts";
@@ -19,6 +21,39 @@ const NAME = /^[a-z0-9][a-z0-9_-]{1,63}$/;
 const THEME_ID = /^[a-z0-9][a-z0-9-]{1,47}$/;
 /** A drop-in's module file, as a route's `:file`. */
 const FILE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}\.ts$/;
+/** How long the token that `gh auth token` gave is used before it is asked again. */
+const GH_TOKEN_MS = 10 * 60 * 1000;
+const run = promisify(execFile);
+
+/**
+ * The token of the GitHub CLI's signed-in account (`gh auth token`), or undefined: no `gh`, no sign-in, or no answer
+ * within 5 seconds. Asked at most once each `GH_TOKEN_MS`, and never while the server starts.
+ */
+function ghToken(): () => Promise<string | undefined> {
+    let kept: { token: string | undefined; at: number } | undefined;
+    let asking: Promise<string | undefined> | undefined;
+
+    return () => {
+        if (kept !== undefined && Date.now() - kept.at < GH_TOKEN_MS) {
+            return Promise.resolve(kept.token);
+        }
+
+        asking ??= run("gh", ["auth", "token"], { timeout: 5000, windowsHide: true })
+            .then(
+                ({ stdout }) => /^[\w-]{20,255}$/.exec(stdout.trim())?.[0],
+                () => undefined,
+            )
+            .then((token) => {
+                kept = { token, at: Date.now() };
+                asking = undefined;
+
+                return token;
+            });
+
+        return asking;
+    };
+}
+
 /** How often the index is read again while extensions from it are installed, so a revoked one is told soon. */
 const CHECK_MS = 12 * 60 * 60 * 1000;
 
@@ -32,6 +67,30 @@ export default function createGallery(host: PocketHost, web: ExtensionWeb) {
         });
 
         return defineExtension({ name: "pocket-gallery" });
+    }
+
+    // A GitHub token, for a private index and private extension repositories. A secret: it stays on the server, and
+    // goes only to GitHub's hosts (`gallery/fetch.ts`).
+    if (typeof web.settings === "function") {
+        web.settings([
+            {
+                name: "githubToken",
+                label: "GitHub token",
+                description:
+                    "Only for a private index or private extension repositories: a fine-grained token that reads their contents is enough. Empty: the GitHub CLI's token (gh auth token), when gh is signed in. It goes only to GitHub.",
+                type: "text",
+                secret: true,
+                default: "",
+            },
+        ]);
+        const fromGh = ghToken();
+
+        // The setting first; else the GitHub CLI's.
+        gallery.githubToken = async () =>
+            String(web.setting("githubToken") ?? "").trim() || (await fromGh());
+        web.onDispose(() => {
+            gallery.githubToken = async () => undefined;
+        });
     }
 
     /** The gallery's errors as they are, to the owner: they say what went wrong, and name nothing secret. */
