@@ -26,6 +26,7 @@ import {
     findTailscale,
     isAccessMode,
     lanAddresses,
+    serveAllowed,
     serveBailOut,
     staleServePorts,
     TAILSCALE_MISSING_MESSAGE,
@@ -86,6 +87,13 @@ const settingsFile = join(options.data, "launcher.json");
  * mount the launcher found and adopted gets none, and neither does the owner's own `tailscale serve` at this port.
  */
 const serveMountFile = join(options.data, "serve-mount.json");
+/** Whether this launch may run `tailscale serve` at all (`serveAllowed`): not behind a gateway. */
+const mayServe = serveAllowed({
+    socket: options.socket,
+    externalAuth: process.env.PI_POCKET_AUTH_CONFIG !== undefined,
+});
+const SERVE_REFUSED =
+    "--access tailscale-serve is not available behind a gateway (--socket or PI_POCKET_AUTH_CONFIG): Serve's mount is the whole node's and would replace the gateway's route. Pick another access mode.";
 
 /** The port of the mount that the receipt names, if there is one. */
 function savedServeMountPort(): number | undefined {
@@ -249,26 +257,31 @@ function accessChoices(): { mode: AccessMode; choice: Choice }[] {
         },
         {
             mode: "tailscale-serve",
-            choice:
-                options.host !== undefined
+            choice: !mayServe
+                ? {
+                      label: ACCESS_LABELS["tailscale-serve"],
+                      detail: "not behind a gateway: serve would replace its route",
+                      disabled: true,
+                  }
+                : options.host !== undefined
+                  ? {
+                        label: ACCESS_LABELS["tailscale-serve"],
+                        detail: "not with --host: serve listens on 127.0.0.1",
+                        disabled: true,
+                    }
+                  : findTailscale() === undefined
                     ? {
                           label: ACCESS_LABELS["tailscale-serve"],
-                          detail: "not with --host: serve listens on 127.0.0.1",
+                          detail: "needs tailscale on PATH",
                           disabled: true,
                       }
-                    : findTailscale() === undefined
-                      ? {
-                            label: ACCESS_LABELS["tailscale-serve"],
-                            detail: "needs tailscale on PATH",
-                            disabled: true,
-                        }
-                      : {
-                            label: ACCESS_LABELS["tailscale-serve"],
-                            detail:
-                                state.mode === "tailscale-serve" && state.accessUrl !== undefined
-                                    ? `${state.accessUrl} · your tailnet, encrypted`
-                                    : "https on your tailnet · tailscale serve",
-                        },
+                    : {
+                          label: ACCESS_LABELS["tailscale-serve"],
+                          detail:
+                              state.mode === "tailscale-serve" && state.accessUrl !== undefined
+                                  ? `${state.accessUrl} · your tailnet, encrypted`
+                                  : "https on your tailnet · tailscale serve",
+                      },
         },
     ];
 }
@@ -868,6 +881,12 @@ async function stopTunnel(): Promise<void> {
  * serve off` behind Pi Pocket's back shows up on the next start, not here.
  */
 function prepareServe(): boolean {
+    if (!mayServe) {
+        log(yellow(`  ${SERVE_REFUSED}`));
+
+        return false;
+    }
+
     const binary = findTailscale();
 
     if (binary === undefined) {
@@ -1147,8 +1166,12 @@ async function main(): Promise<void> {
     // check only, with no `tailscale` command run: a daemon that is down, an old version, or certificates that are off
     // are problems to report when serve is prepared, not reasons to refuse to launch. `--host` alone never uses serve,
     // so a saved choice is not a reason to refuse to start there either.
+    if (!mayServe && options.socket === undefined && options.access === "tailscale-serve") {
+        fail(SERVE_REFUSED);
+    }
+
     if (
-        options.socket === undefined &&
+        mayServe &&
         serveBailOut({
             access: options.access,
             saved: settings.access,
@@ -1214,7 +1237,17 @@ async function main(): Promise<void> {
         // answering 502. Clear it before this run needs the port, whichever mode it starts in. Only a mount with a
         // receipt is ours: a port alone proves nothing, since 0.27's docs had owners point `tailscale serve` at
         // `--access local` themselves. Never for `tailscale-serve` itself, whose mount prepareServe() made or adopted.
-        const stalePorts = mode === "socket" ? [] : staleServePorts(mode, savedServeMountPort());
+        // Behind a gateway no `tailscale serve` runs at all, not even to clear a stale mount: the receipt is only told.
+        const stalePorts =
+            mode === "socket" || !mayServe ? [] : staleServePorts(mode, savedServeMountPort());
+
+        if (!mayServe && savedServeMountPort() !== undefined) {
+            log(
+                yellow(
+                    `  ${serveMountFile} names a Tailscale Serve mount from an earlier run. Behind a gateway Pi Pocket does not run tailscale serve: check "tailscale serve status" yourself, then delete the file.`,
+                ),
+            );
+        }
 
         if (stalePorts.length > 0) {
             const tailscale = findTailscale();

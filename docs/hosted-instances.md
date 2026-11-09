@@ -207,6 +207,9 @@ Each location sets its own secret, and nginx inherits `proxy_set_header` only wh
 
 ## Validate before rollout
 
+- Moving the instances to the Pi Pocket 0.28 base upgrades each data folder one way (Pi Durable 1.5, [architecture](architecture.md)): stop each instance and back up its whole data folder before its first start on 0.28. Going back to an older build needs that backup.
+- The launcher's `--access tailscale-serve` (0.28) mounts Serve at `/` on the whole node. Behind a gateway it is refused: with `--socket` or `PI_POCKET_AUTH_CONFIG` the launcher runs no `tailscale serve` command at all, not to mount, adopt, or clear a stale mount (a receipt left in the data folder is only reported). The node's Serve route stays the administrator's.
+
 - `tailscale version` is 1.104.4 or later, and `tailscale serve status` shows only the intended `https://<host>.<tailnet>.ts.net` → `unix:/run/caddy-front/pocket.sock` route at `/`, accepting the guest capability, with no Funnel.
 - From a different unprivileged Unix account, the gateway ingress is unreachable (`curl --unix-socket /run/caddy-front/pocket.sock http://localhost/alice.name/` is refused, as is the admin socket), and direct backend requests with forged identity headers but no valid gateway secret are denied.
 - No instance listens on TCP: `ss -ltnp` (as root) shows no Pocket backend port and no Caddy port. With the nginx alternative, the gateway's only listener is `127.0.0.1:880`, and `sysctl net.ipv4.ip_unprivileged_port_start` is `1024`.

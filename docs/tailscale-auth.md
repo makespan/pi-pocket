@@ -1,6 +1,6 @@
 # Tailscale external authentication
 
-The bundled provider is `src/server/auth-providers/tailscale.ts`. It implements the [required startup provider API](external-auth.md), not an optional Pocket extension. The existing launcher's `--access tailscale` only makes an instance reachable; **it does not configure this authentication boundary**.
+The bundled provider is `src/server/auth-providers/tailscale.ts`. It implements the [required startup provider API](external-auth.md), not an optional Pocket extension. The existing launcher's `--access tailscale` only makes an instance reachable; **it does not configure this authentication boundary**. Nor does `--access tailscale-serve`, which mounts Serve at `/` for the whole node: the launcher refuses it with `PI_POCKET_AUTH_CONFIG` or `--socket`, and then runs no `tailscale serve` command at all, so it cannot replace the gateway's Serve route.
 
 ## Gateway boundary (required)
 

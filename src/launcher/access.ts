@@ -226,6 +226,18 @@ export function serveBailOut(request: {
 }
 
 /**
+ * Whether this launch may run `tailscale serve` at all: never on a Unix socket (`--socket`) or with external
+ * authentication (`PI_POCKET_AUTH_CONFIG`). Both run behind an administrator's gateway, and Serve's mount is the whole
+ * node's (`--https=443 --set-path=/`): making one, or taking one down as stale, would replace the gateway's own route.
+ */
+export function serveAllowed(launch: {
+    socket: string | undefined;
+    externalAuth: boolean;
+}): boolean {
+    return launch.socket === undefined && !launch.externalAuth;
+}
+
+/**
  * The loopback ports that a mount left by an earlier run of this launcher could point at: the port its receipt names.
  * None without a receipt, and none for `tailscale-serve` itself, whose mount prepareServe() mounted or adopted for this
  * run's port.
