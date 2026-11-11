@@ -814,8 +814,9 @@ function opening(content: unknown): string {
 
 /**
  * What waits in a subagent's queue, for status: each message's start, and when the subagent gets it. A steer goes in
- * at its next pause (after its current tool call, or when its run ends), a follow-up only once its current run ends. A message no longer listed was taken, or,
- * when its run failed, given back with a report that says so. Empty when none waits.
+ * at its next pause (after its current tool call, or when its run ends), a follow-up only once its current run ends. A
+ * message no longer listed was taken, or, when its run failed, given back with a report that says so. Empty when none
+ * waits.
  */
 function waitingNote(inbox: Readonly<InboxState> | undefined): string {
     // Writes wait there too (a compaction's summary, say): they are no messages.
