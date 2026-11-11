@@ -27,6 +27,7 @@ import {
     defineTool,
     type Extension,
     InboxDoc,
+    type InboxState,
     LiveDoc,
     type ModelRef,
     section,
@@ -796,6 +797,43 @@ async function chosenModel(
     return ref;
 }
 
+/** The start of a message that waits, on one line. */
+function opening(content: unknown): string {
+    const text =
+        typeof content === "string"
+            ? content
+            : (Array.isArray(content) ? content : [])
+                  .map((part: { type?: string; text?: string }) =>
+                      part.type === "text" ? (part.text ?? "") : "",
+                  )
+                  .join(" ");
+    const flat = text.replace(/\s+/g, " ").trim();
+
+    return flat.length > 60 ? `${flat.slice(0, 59)}…` : flat;
+}
+
+/**
+ * What waits in a subagent's queue, for status: each message's start, and when the subagent gets it. A steer goes in
+ * at its next pause (after its current tool call, or when its run ends), a follow-up only once its current run ends. A message no longer listed was taken, or,
+ * when its run failed, given back with a report that says so. Empty when none waits.
+ */
+function waitingNote(inbox: Readonly<InboxState> | undefined): string {
+    // Writes wait there too (a compaction's summary, say): they are no messages.
+    const each = (inbox?.items ?? []).flatMap((item) =>
+        item.mode === "write"
+            ? []
+            : [
+                  `${item.mode === "followUp" ? "a follow-up, taken when its current run ends" : "a steer, taken at its next pause"}: “${opening(item.content)}”`,
+              ],
+    );
+
+    if (each.length === 0) {
+        return "";
+    }
+
+    return `; ${each.length === 1 ? "1 message waits" : `${each.length} messages wait`} in its queue (${each.join("; ")})`;
+}
+
 export default function createSubagents(host: PocketHost) {
     const Courier = courierFor(host);
     const Reporter = reporterFor(Courier, host);
@@ -889,8 +927,11 @@ export default function createSubagents(host: PocketHost) {
                     const busy =
                         (await api.snapshot(LiveDoc, found.conversationId, context))?.run !==
                         undefined;
+                    const waiting = waitingNote(
+                        await api.snapshot(InboxDoc, found.conversationId, context),
+                    );
 
-                    lines.push(`${each}: ${busy ? "working" : "idle"}`);
+                    lines.push(`${each}: ${busy ? "working" : "idle"}${waiting}`);
                 }
 
                 return reply(lines.length === 0 ? "No subagents." : lines.join("\n"));
@@ -1002,6 +1043,11 @@ export default function createSubagents(host: PocketHost) {
                 }
             }
 
+            // A subagent at work takes a message only at its next boundary: Pi is told when, so it does not take the
+            // message as read.
+            const atWork =
+                action === "send" &&
+                (await api.snapshot(LiveDoc, agent!.conversationId, context))?.run !== undefined;
             const result = await api.commit(async (tx) => {
                 const state = await tx.doc(SubagentsDoc, api.conversationId);
 
@@ -1053,7 +1099,13 @@ export default function createSubagents(host: PocketHost) {
                 state.reporters[api.taskId] = await tx.createTask(Reporter, input, BACKGROUND);
 
                 if (action === "send") {
-                    return `Sent to ${name}.`;
+                    if (!atWork) {
+                        return `Sent to ${name}.`;
+                    }
+
+                    return followUp === true
+                        ? `Queued for ${name}: it is at work, and gets the message only when its current run ends. Until then it works on what it had; status shows what waits.`
+                        : `Queued for ${name}: it is at work, and gets the message at its next pause, after its current tool call or when its run ends. status shows what waits.`;
                 }
 
                 const runs = model ?? parent.model;
