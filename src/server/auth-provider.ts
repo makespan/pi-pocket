@@ -30,6 +30,12 @@ export interface ExternalAuthPolicy {
      * `{ "role": "guest" }` value. Checked on every request; the owner never needs it.
      */
     guestCapability?: string;
+    /**
+     * Also admit, as an owner of their own, any subject whose principal holds this capability with a
+     * `{ "role": "owner" }` value: a native person with the owner role next to the `owner` subject's, with
+     * their own name and attribution. Checked on every request, like `guestCapability`.
+     */
+    ownerCapability?: string;
     /** Public browser origin, independent of untrusted Host / forwarding headers. */
     origin: string;
 }
@@ -37,8 +43,12 @@ export interface ExternalAuthPolicy {
 /** A domain-qualified capability name, as Tailscale app capabilities use: `example.com/cap/pi-pocket`. */
 const capabilityName = /^[a-z0-9.-]+\.[a-z]{2,}\/[A-Za-z0-9._/-]+$/;
 
-/** Whether a provider's verified grants for `capability` include a guest role value. */
-function grantsGuest(principal: AuthPrincipal, capability: string | undefined): boolean {
+/** Whether a provider's verified grants for `capability` include a value with exactly this own `role`. */
+function grantsRole(
+    principal: AuthPrincipal,
+    capability: string | undefined,
+    role: "guest" | "owner",
+): boolean {
     const capabilities: unknown = principal.capabilities;
 
     if (
@@ -60,7 +70,7 @@ function grantsGuest(principal: AuthPrincipal, capability: string | undefined): 
                 typeof value === "object" &&
                 value !== null &&
                 Object.hasOwn(value, "role") &&
-                (value as { role?: unknown }).role === "guest",
+                (value as { role?: unknown }).role === role,
         )
     );
 }
@@ -131,6 +141,9 @@ export class ExternalAuth {
             (policy.guestCapability !== undefined &&
                 (typeof policy.guestCapability !== "string" ||
                     !capabilityName.test(policy.guestCapability))) ||
+            (policy.ownerCapability !== undefined &&
+                (typeof policy.ownerCapability !== "string" ||
+                    !capabilityName.test(policy.ownerCapability))) ||
             new URL(policy.origin).origin !== policy.origin
         ) {
             throw new Error("Invalid external authentication configuration");
@@ -159,14 +172,22 @@ export class ExternalAuth {
             throw new HttpError(503, "External authentication unavailable");
         }
 
-        // The owner is the exact subject alone. A guest is listed or, on this request, holds the capability:
-        // losing it denies the next request but keeps the native person and binding for when it returns.
+        // The bootstrap owner is the exact subject. Another owner, a person of their own, holds the owner capability
+        // on this request. A guest is listed or holds the guest capability. Losing a capability denies the next
+        // request but keeps the native person and binding for when it returns.
+        const subject = typeof principal?.subject === "string" ? principal.subject : "";
+        const bootstrapOwner = subject.length > 0 && subject === this.#policy.owner;
+        const additionalOwner =
+            subject.length > 0 &&
+            !bootstrapOwner &&
+            grantsRole(principal!, this.#policy.ownerCapability, "owner");
+
         if (
-            typeof principal?.subject !== "string" ||
-            principal.subject.length === 0 ||
-            (principal.subject !== this.#policy.owner &&
-                !this.#policy.guests.includes(principal.subject) &&
-                !grantsGuest(principal, this.#policy.guestCapability))
+            subject.length === 0 ||
+            (!bootstrapOwner &&
+                !additionalOwner &&
+                !this.#policy.guests.includes(subject) &&
+                !grantsRole(principal!, this.#policy.guestCapability, "guest"))
         ) {
             throw new HttpError(403, "External identity not admitted");
         }
@@ -194,9 +215,10 @@ export class ExternalAuth {
 
         const user = config.externalUser(
             this.#provider.id,
-            principal.subject,
-            principal.subject === this.#policy.owner,
-            principal.name,
+            subject,
+            bootstrapOwner || additionalOwner,
+            principal!.name,
+            additionalOwner,
         );
 
         if (user === undefined) {
