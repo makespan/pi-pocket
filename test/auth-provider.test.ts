@@ -635,3 +635,141 @@ test("an app capability admits one persistent native guest per request; losing i
     );
     await stopServer();
 });
+
+test("ownerCapability must be a capability name like guestCapability", () => {
+    const owners = { owner: policy.owner, origin: policy.origin, ownerCapability: guestCapability };
+
+    assert.ok(new ExternalAuth(capabilityProvider, owners));
+    assert.ok(new ExternalAuth(capabilityProvider, { ...owners, guestCapability }));
+
+    for (const invalid of [
+        "",
+        "pi-pocket",
+        "example.com/",
+        "Example.com/cap/x",
+        42,
+        null,
+        [guestCapability],
+    ]) {
+        assert.throws(
+            () =>
+                new ExternalAuth(capabilityProvider, {
+                    ...owners,
+                    ownerCapability: invalid as string,
+                }),
+            /Invalid external authentication configuration/,
+            JSON.stringify(invalid),
+        );
+    }
+});
+
+test("an owner capability admits owners of their own next to the owner subject; losing it denies them", async () => {
+    const ownersData = join(root, "external-capability-owners");
+    const ownersPolicy = {
+        owner: policy.owner,
+        origin: policy.origin,
+        ownerCapability: guestCapability,
+        guestCapability,
+    };
+    const as = (subject: string, capabilities?: unknown) => ({
+        headers: {
+            ...headers(subject),
+            ...(capabilities === undefined
+                ? {}
+                : { "test-capabilities": JSON.stringify(capabilities) }),
+        },
+    });
+    const ownerGrant = { [guestCapability]: [{ role: "owner" }] };
+    const guestGrant = { [guestCapability]: [{ role: "guest" }] };
+
+    await app!.close();
+    app = await openApp(scriptedModel(), ownersData);
+    let base = await serve(new ExternalAuth(capabilityProvider, ownersPolicy));
+    const users = app.config.users.length;
+
+    // A capability owner who comes first never takes the bootstrap owner's place.
+    const alice = await (await fetch(base + "/api/me", as("alice@example.com", ownerGrant))).json();
+    const me = await (await fetch(base + "/api/me", as(policy.owner))).json();
+    const bob = await (
+        await fetch(
+            base + "/api/me",
+            as("bob@example.com", { [guestCapability]: [{ role: "guest" }, { role: "owner" }] }),
+        )
+    ).json();
+
+    assert.equal(me.user.id, owner(app).id);
+    assert.equal(me.user.role, "owner");
+    // Each is a person of their own, with the owner role and their own name.
+    assert.equal(alice.user.role, "owner");
+    assert.equal(bob.user.role, "owner");
+    assert.equal(new Set([me.user.id, alice.user.id, bob.user.id]).size, 3);
+    assert.equal(alice.user.name, "alice@example.com");
+    assert.equal(app.config.users.length, users + 2);
+    // The same person again, across requests.
+    assert.equal(
+        (await (await fetch(base + "/api/me", as("alice@example.com", ownerGrant))).json()).user.id,
+        alice.user.id,
+    );
+
+    // Only an own "owner" role value of the configured capability makes an owner.
+    for (const capabilities of [
+        undefined,
+        {},
+        { [guestCapability]: [] },
+        { [guestCapability]: [{}] },
+        { [guestCapability]: [{ role: "viewer" }] },
+        { [guestCapability]: [{ inheritedRole: "owner" }] },
+        { [guestCapability]: ["owner"] },
+        { [guestCapability]: { role: "owner" } },
+        { "example.com/cap/other": [{ role: "owner" }] },
+    ]) {
+        assert.equal(
+            (await fetch(base + "/api/me", as("carol@example.com", capabilities))).status,
+            403,
+            JSON.stringify(capabilities),
+        );
+    }
+
+    // A guest stays a guest: the owner role cannot elevate a guest binding.
+    const dave = await (await fetch(base + "/api/me", as("dave@example.com", guestGrant))).json();
+
+    assert.equal(dave.user.role, "guest");
+    assert.equal((await fetch(base + "/api/me", as("dave@example.com", ownerGrant))).status, 403);
+    // An additional owner has the owner's powers, such as managing a guest's access.
+    app.setAccess(app.config.userById(alice.user.id)!, dave.user.id, { role: "viewer" });
+    assert.equal(app.config.userById(dave.user.id)?.role, "viewer");
+    // Losing the owner role denies the next request; the person and binding stay.
+    assert.equal((await fetch(base + "/api/me", as("alice@example.com"))).status, 403);
+    assert.equal((await fetch(base + "/api/me", as("alice@example.com", guestGrant))).status, 403);
+    assert.equal(app.config.userById(alice.user.id)?.role, "owner");
+    // Owners cannot remove or demote each other in the app.
+    assert.throws(() => app!.removeUser(owner(app!), alice.user.id), /cannot be removed/);
+    assert.throws(
+        () => app!.setAccess(owner(app!), alice.user.id, { role: "viewer" }),
+        /can do everything/,
+    );
+    await stopServer();
+    // Persistent across restarts.
+    await app.close();
+    app = await openApp(scriptedModel(), ownersData);
+    base = await serve(new ExternalAuth(capabilityProvider, ownersPolicy));
+    assert.equal(
+        (await (await fetch(base + "/api/me", as("bob@example.com", ownerGrant))).json()).user.id,
+        bob.user.id,
+    );
+    assert.equal(
+        (await (await fetch(base + "/api/me", as(policy.owner))).json()).user.id,
+        owner(app).id,
+    );
+    await stopServer();
+    // Without ownerCapability (a login-owned policy), the owner role value admits nobody.
+    base = await serve(
+        new ExternalAuth(capabilityProvider, {
+            owner: policy.owner,
+            origin: policy.origin,
+            guestCapability,
+        }),
+    );
+    assert.equal((await fetch(base + "/api/me", as("eve@example.com", ownerGrant))).status, 403);
+    await stopServer();
+});
