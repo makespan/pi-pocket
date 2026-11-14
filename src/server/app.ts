@@ -1333,7 +1333,7 @@ export class PocketApp {
                 }
 
                 sessionsChanged = true;
-                this.alerts.runChanged(id, busy);
+                this.alerts.runChanged(id, busy, failure);
 
                 if (!busy) {
                     this.spend.runEnded(id);
@@ -1463,7 +1463,12 @@ export class PocketApp {
 
         const registry = () => this.#registry;
         const stream = () => this.streamSettings();
-        const compaction = compactionReader(settings, (line) => this.#log(line));
+        // Every model Pi knows, so each gets room for its summary when Pi's settings set no reserve (`compaction.ts`).
+        const compaction = compactionReader(
+            settings,
+            (line) => this.#log(line),
+            () => safe(() => this.models.getModels()) ?? [],
+        );
 
         return {
             // A phase can wait for hours without changing state; repeated process kills must not park it.
@@ -2886,6 +2891,14 @@ export class PocketApp {
         return this.#busy.has(id);
     }
 
+    /**
+     * Why the session's last run failed, while it is idle after it: also a failure that left no failed answer, such as
+     * a compaction that could not be written. Undefined once a run starts again.
+     */
+    runFailure(id: ConversationId): string | undefined {
+        return this.#busy.has(id) ? undefined : this.#failed.get(id);
+    }
+
     /** The conversations with a run going. */
     busyConversations(): ConversationId[] {
         return [...this.#busy];
@@ -4248,7 +4261,8 @@ export class PocketApp {
 /**
  * Continue on the runtime's calls: after Pi and the caller shaped a request, each shaper may replace the payload, the
  * last one closest to the wire. With no shaper, the call goes on untouched. A shaper may answer with a promise. One
- * that throws is logged and skipped: a faulty module must not fail the model call.
+ * that throws is logged and skipped: a faulty module must not fail the model call. A shaped call sends its whole
+ * request: an Anthropic thread continuation would leave out the system blocks and tools a shaper may have changed.
  */
 export function installRequestShaping(
     models: { streamSimple: ModelRuntime["streamSimple"] },
@@ -4264,6 +4278,7 @@ export function installRequestShaping(
 
         return stream(model, context, {
             ...options,
+            disableContinuation: true,
             onPayload: async (payload, payloadModel) => {
                 const asked = await options?.onPayload?.(payload, payloadModel);
                 let next = asked ?? payload;
