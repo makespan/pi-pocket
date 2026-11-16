@@ -12,3 +12,7 @@ Pi Pocket is often edited from inside itself, while it runs. [docs/map.md](docs/
 - The server is plain TypeScript run by Node's type stripping: only erasable syntax (no enums, no parameter properties, no namespaces). Imports use `.ts` extensions.
 - Code style is Prettier (`.prettierrc.json`: 4 spaces, 100 columns) plus ESLint's layout rules (`eslint.config.js`): braces on every `if` and loop, and a blank line after declarations, around blocks, and before `return` and `throw`. Run `npm run format` after editing. Prettier leaves the markup in `html` templates alone, so lay it out by hand the same way: 4 spaces per level, and a tag that runs past 100 columns gets one attribute per line and its children on their own lines. In htm a line break is not a space: break only where there is no space, or between tags, never inside running text.
 - Run `npm run check`, `npm run lint`, and `npm test` after server changes.
+
+## Makespan's fork
+
+- **Before you move the base version** (an upstream sync, or a new branch that our servers run): check every extension in [makespan/pocket-extensions](https://github.com/makespan/pocket-extensions) against it. Some depend on parts of Pi Pocket that are not API guarantees. With `npm install` done here, run in a checkout of that repository: `sh scripts/link-pocket.sh <this checkout>`, `npm install`, and `npm run check:upgrade`, then the browser checks in its README ("Upgrading Pi Pocket"). Fix what fails, or tell the owner, before the new version reaches people.
