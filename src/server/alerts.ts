@@ -224,7 +224,7 @@ export class Alerts {
             const message: PushMessage = {
                 title: `${title} · ${await app.conversationTitle(root)}`,
                 body: snippet(body, 400),
-                url: `/s/${String(root)}`,
+                url: app.url(`/s/${String(root)}`),
                 tag: `stalled-${String(root)}`,
             };
 

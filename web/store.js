@@ -2611,7 +2611,7 @@ export function navigate(
 export function navigateUp(conversationId) {
     navigate(
         conversationId,
-        routeUnder() === `/s/${conversationId}` ? { back: true } : { replace: true },
+        routeUnder() === appUrl(`/s/${conversationId}`) ? { back: true } : { replace: true },
     );
 }
 

@@ -592,6 +592,48 @@ test("poll, SSE, extension modules, public links and artifact bundle capabilitie
     }
 });
 
+test("0.29's signed-in page facts and stalled-work push stay in the mount", async () => {
+    for (const app of apps) {
+        const response = await fetch(origin + app.url("/s/12"), {
+            headers: { authorization: `Bearer ${app.config.ownerToken}` },
+        });
+        const html = await response.text();
+        const known =
+            /<script type="application\/json" id="pocket-known">([\s\S]*?)<\/script>/.exec(
+                html,
+            )?.[1];
+
+        assert.ok(known !== undefined, "a signed-in page carries who and which build");
+        assert.equal(JSON.parse(known).build, app.build);
+        const hash = createHash("sha256").update(known).digest("base64");
+
+        assert.ok(response.headers.get("content-security-policy")?.includes(`'sha256-${hash}'`));
+
+        for (const match of html.matchAll(/<link rel="modulepreload" href="([^"]+)"/g)) {
+            assert.ok(match[1]!.startsWith(app.url("/")), match[1]!);
+        }
+
+        const id = await newSession(app);
+        const pushed: { url: string }[] = [];
+        const alerts = app.alerts as unknown as { push: (...args: unknown[]) => Promise<void> };
+        const push = alerts.push;
+        const embedders = app.hasEmbedders;
+
+        alerts.push = async (...args) => void pushed.push(args[3] as { url: string });
+        app.hasEmbedders = () => true;
+
+        try {
+            app.alerts.ownerAlert(id, "Stalled", "no progress");
+            await until(async () => pushed.length === 1, "stalled push");
+        } finally {
+            alerts.push = push;
+            app.hasEmbedders = embedders;
+        }
+
+        assert.equal(pushed[0]!.url, app.url(`/s/${id}`));
+    }
+});
+
 test(
     "one browser keeps two instances signed in, isolates state and PWA shares, and uses scoped live updates",
     { skip: findBrowser() === undefined ? "no Chromium" : false },
@@ -718,6 +760,30 @@ test(
                     ),
                 "prefixed deep link",
             );
+            // 0.29: the file sheet's download link, and going up to the session a subagent was opened over.
+            const child = await newSession(app);
+            const store = JSON.stringify(app.url("/store.js"));
+            const up = await evaluate<{ download: string; path: string; from: string | null }>(`
+            const { navigate, navigateUp } = await import(${store});
+            const { downloadUrl } = await import(${JSON.stringify(app.url("/ui.js"))});
+            navigate(${child}, { over: { id: ${id} } });
+            for (let tries = 0; location.pathname !== ${JSON.stringify(app.url(`/s/${child}`))}; tries++) {
+                if (tries > 100) throw new Error("child route not shown");
+                await new Promise((resolve) => setTimeout(resolve, 20));
+            }
+            navigateUp(${id});
+            for (let tries = 0; location.pathname !== ${JSON.stringify(app.url(`/s/${id}`))}; tries++) {
+                if (tries > 100) throw new Error("parent route not shown");
+                await new Promise((resolve) => setTimeout(resolve, 20));
+            }
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            return JSON.stringify({ download: downloadUrl("notes.txt", ${id}), path: location.pathname, from: history.state?.pocket?.from ?? null });
+        `);
+
+            assert.equal(up.download, app.url(`/api/c/${id}/download?path=notes.txt`));
+            assert.equal(up.path, app.url(`/s/${id}`));
+            // Back to the parent's own entry, not the child's entry replaced in place (which keeps from: the parent).
+            assert.notEqual(up.from, app.url(`/s/${id}`));
         }
     },
 );
