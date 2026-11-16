@@ -139,7 +139,21 @@ async function fresh(): Promise<void> {
             }
         }
     `);
-    await page.navigate(`${base}/`);
+
+    // The test before may have closed a layer just now: the back stack takes its history entry off after a short
+    // settle (`history.go` in web/back.js), and nothing outside back.js can see when that is done (a test may also
+    // leave a layer open, so "no layer" is no sign). A traversal that comes after the load starts aborts it, and the
+    // page stays on the route under the layer. That traversal belonged to the old page: the next load is clean.
+    for (let tries = 1; ; tries++) {
+        const loaded = await page.navigate(`${base}/`);
+
+        if (loaded.error === undefined) {
+            break;
+        }
+
+        assert.ok(tries < 3, `the session list did not load: ${loaded.error}`);
+    }
+
     await until(
         async () =>
             (await inPage<boolean>(
