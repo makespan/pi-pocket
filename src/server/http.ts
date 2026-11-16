@@ -7,6 +7,7 @@ import { requestPath } from "../base-path.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join, normalize, sep } from "node:path";
 import { Auth } from "./auth.ts";
+import { helloUser } from "./config.ts";
 import { describe, HttpError } from "./errors.ts";
 import { createApi } from "./http/api.ts";
 import { artifact } from "./http/artifacts.ts";
@@ -31,6 +32,22 @@ import { themeFile } from "./http/theme-routes.ts";
 
 /** The version of the app bridge the web app speaks (`web/host.js`). */
 const BRIDGE_VERSION = 1;
+
+/**
+ * Who is signed in, and this server's build, for the app page (`serveApp`): the same `user` a hello sends, so the tab
+ * can check a session the device kept (`usable`) before `/api/me` answers. Absent when signed out or caching is off.
+ */
+function pageFacts(
+    request: IncomingMessage,
+    auth: Auth,
+    app: HttpOptions["app"],
+): { user: ReturnType<typeof helloUser>; build: string } | undefined {
+    const user = auth.user(request);
+
+    return user === undefined || process.env.PI_POCKET_SESSION_CACHE === "off"
+        ? undefined
+        : { user: helloUser(user), build: app.build };
+}
 
 export function createHandler(options: HttpOptions) {
     const { app, externalAuth } = options;
@@ -219,12 +236,14 @@ export function createHandler(options: HttpOptions) {
                 return sharePage(response, app.basePath);
             }
 
-            // The web app: index.html for app routes, files from web/ otherwise.
+            // The web app: index.html for app routes, files from web/ otherwise. Who is signed in, and this
+            // server's build, go in the page (`serveApp`): the tab checks a session the device kept before `/api/me`.
             if (parts.length === 0 || parts[0] === "s") {
                 return serveApp(
                     response,
                     app.basePath,
                     iconAddress(request, app.dataDir, app.basePath),
+                    pageFacts(request, auth, app),
                 );
             }
 
@@ -239,6 +258,7 @@ export function createHandler(options: HttpOptions) {
                     response,
                     app.basePath,
                     iconAddress(request, app.dataDir, app.basePath),
+                    pageFacts(request, auth, app),
                 );
             }
 
