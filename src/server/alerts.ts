@@ -208,15 +208,17 @@ export class Alerts {
         })().catch((error: unknown) => app.log(`push failed: ${describe(error)}`));
     }
 
-    /** Work passed a hard limit: a notice in the owner's tabs, and one push to the owner, who decides what follows. */
+    /** Work passed a hard limit: a notice in the owners' tabs, and a push to each owner, who decide what follows. */
     ownerAlert(conversationId: ConversationId, title: string, body: string): void {
         const app = this.#app;
         const root = app.rootOf(conversationId);
-        const ownerId = app.config.users.find((user) => user.role === "owner")?.id;
+        const ownerIds = app.config.users
+            .filter((user) => user.role === "owner")
+            .map((user) => user.id);
 
         app.ownerNotice("warning", `${title}: ${body}`);
 
-        if (ownerId === undefined || this.#quiet() || app.sessionMeta(root) === undefined) {
+        if (ownerIds.length === 0 || this.#quiet() || app.sessionMeta(root) === undefined) {
             return;
         }
 
@@ -228,7 +230,9 @@ export class Alerts {
                 tag: `stalled-${String(root)}`,
             };
 
-            await this.push(ownerId, root, "stalled", message);
+            await Promise.all(
+                ownerIds.map((ownerId) => this.push(ownerId, root, "stalled", message)),
+            );
         })().catch((error: unknown) => app.log(`push failed: ${describe(error)}`));
     }
 

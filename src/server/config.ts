@@ -98,8 +98,17 @@ interface PocketConfig {
     users: User[];
     /** Invites not yet used: kept here so one that lasts a day or a week outlives a restart. */
     invites?: StoredInvite[];
-    /** Permanent external identity bindings. A missing user is a tombstone, never automatic readmission. */
-    externalBindings?: { provider: string; subject: string; userId: string; owner: boolean }[];
+    /**
+     * Permanent external identity bindings. A missing user is a tombstone, never automatic readmission.
+     * `bootstrap: false` marks an additional owner admitted by the owner capability, not the policy's owner subject.
+     */
+    externalBindings?: {
+        provider: string;
+        subject: string;
+        userId: string;
+        owner: boolean;
+        bootstrap?: false;
+    }[];
     lastModel?: ModelChoice;
     /** The model and thinking level new sessions start with, as the owner chose; absent: the last one picked. */
     defaultModel?: ModelChoice;
@@ -402,12 +411,19 @@ export class ConfigStore {
         return { user, token };
     }
 
-    /** Bind once, in the same atomic config save as user creation; keep deleted users' bindings as tombstones. */
+    /**
+     * Bind once, in the same atomic config save as user creation; keep deleted users' bindings as tombstones.
+     * `additionalOwner`: an owner admitted by the policy's owner capability rather than as its `owner` subject. It
+     * becomes a native owner of its own, next to the bootstrap owner, and never takes the bootstrap owner's place.
+     * `guest`: the subject is also admitted as a guest on this request (listed, or by the guest capability).
+     */
     externalUser(
         provider: string,
         subject: string,
         owner: boolean,
         name?: string,
+        additionalOwner = false,
+        guest = false,
     ): User | undefined {
         const bindings = this.#config.externalBindings ?? [];
         const binding = bindings.find(
@@ -415,22 +431,34 @@ export class ConfigStore {
         );
 
         if (binding !== undefined) {
-            // A changed owner mapping cannot elevate a former guest or let a former owner in as a guest.
-            return binding.owner === owner ? this.userById(binding.userId) : undefined;
+            // A changed owner mapping cannot elevate a former guest or let a former owner in as a guest. A bound guest
+            // who also holds the owner capability comes in with their bound role when they are admitted as a guest too
+            // (`guest`): a capability never upgrades a binding.
+            return binding.owner === owner || (!binding.owner && additionalOwner && guest)
+                ? this.userById(binding.userId)
+                : undefined;
         }
 
-        // One bootstrap owner identity per provider. Replacing it requires explicit offline administration.
-        if (owner && bindings.some((each) => each.provider === provider && each.owner)) {
+        // One bootstrap owner identity per provider (the policy's owner subject). Replacing it requires explicit
+        // offline administration. Additional owners never bind to it.
+        if (
+            owner &&
+            !additionalOwner &&
+            bindings.some(
+                (each) => each.provider === provider && each.owner && each.bootstrap !== false,
+            )
+        ) {
             return undefined;
         }
 
-        const user: User | undefined = owner
+        const bootstrap = owner && !additionalOwner;
+        const user: User | undefined = bootstrap
             ? this.#config.users.find((each) => each.role === "owner")
             : {
                   id: randomUUID(),
                   name: name?.replace(/\s+/g, " ").trim().slice(0, 40) || subject.slice(0, 40),
-                  role: "guest",
-                  // No recoverable bearer for external guests, and no token a native login can match.
+                  role: owner ? "owner" : "guest",
+                  // No recoverable bearer for external people, and no token a native login can match.
                   tokenHash: "",
                   createdAt: Date.now(),
               };
@@ -439,13 +467,19 @@ export class ConfigStore {
             return undefined;
         }
 
-        if (!owner) {
+        if (!bootstrap) {
             this.#config.users.push(user);
         }
 
         this.#config.externalBindings = [
             ...bindings,
-            { provider, subject, userId: user.id, owner },
+            {
+                provider,
+                subject,
+                userId: user.id,
+                owner,
+                ...(owner && !bootstrap ? { bootstrap: false } : {}),
+            },
         ];
         this.save();
 
@@ -494,10 +528,23 @@ export class ConfigStore {
         this.save();
     }
 
-    /** Remove someone (never the owner), and the invites they made, which could no longer be used. */
+    /**
+     * Whether `id` is an owner admitted by an owner capability (binding `bootstrap: false`), not the bootstrap owner.
+     * Only such an owner can be removed, and only by the bootstrap owner (`PocketApp.removeUser`).
+     */
+    additionalOwner(id: string): boolean {
+        return (this.#config.externalBindings ?? []).some(
+            (each) => each.userId === id && each.owner && each.bootstrap === false,
+        );
+    }
+
+    /**
+     * Remove someone (never the bootstrap owner), and the invites they made, which could no longer be used. Their
+     * external binding stays as a tombstone.
+     */
     removeUser(id: string): void {
         this.#config.users = this.#config.users.filter(
-            (user) => user.id !== id || user.role === "owner",
+            (user) => user.id !== id || (user.role === "owner" && !this.additionalOwner(user.id)),
         );
 
         if (!this.#config.users.some((user) => user.id === id)) {
