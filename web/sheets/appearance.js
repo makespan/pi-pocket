@@ -33,6 +33,8 @@ import {
 } from "../theme.js";
 import { arranged, move, resetSlot, setShown, SLOTS } from "../slots.js";
 import { html, Icon, Sheet, Switch } from "../ui.js";
+import { pipAvailable } from "../pip.js";
+import { QUOTE_STYLES, quoteStyleOf } from "../quote-box.js";
 import { galleryAvailable } from "./gallery.js";
 
 // Key hints are for people with a keyboard: a touch screen has none.
@@ -680,6 +682,31 @@ export function AppearanceSheet() {
                 <//>`
             }
             <${SettingRow}
+                title="Switch sessions with"
+                detail="Tabs: a strip above the session, one segment for each of the first nine sessions. Choosing Tabs folds the sidebar to its rail, and Sidebar unfolds it"
+            >
+                <div class="segmented">
+                    ${[
+                        [false, "Sidebar"],
+                        [true, "Tabs"],
+                    ].map(
+                        ([value, label]) =>
+                            html`<button
+                                class=${Boolean(p.sessionTabs) === value ? "on" : ""}
+                                aria-pressed=${Boolean(p.sessionTabs) === value}
+                                onClick=${() =>
+                                    Boolean(p.sessionTabs) !== value &&
+                                    setPrefs({
+                                        sessionTabs: value,
+                                        sidebar: value ? "rail" : "open",
+                                    })}
+                            >
+                                ${label}
+                            </button>`,
+                    )}
+                </div>
+            <//>
+            <${SettingRow}
                 title="Sidebar"
                 detail="Folded, it shows numbered sessions like workspaces"
             >
@@ -699,6 +726,29 @@ export function AppearanceSheet() {
                     )}
                 </div>
             <//>
+            ${
+                pipAvailable() &&
+                html`<${SettingRow}
+                    title="PiP"
+                    detail="Floating: a window in the corner, or a sheet on a phone. Board: its conversation in the session's place, with every step and its menu"
+                >
+                    <div class="segmented">
+                        ${[
+                            ["floating", "Floating"],
+                            ["board", "Board"],
+                        ].map(
+                            ([value, label]) =>
+                                html`<button
+                                    class=${p.pip === value ? "on" : ""}
+                                    aria-pressed=${p.pip === value}
+                                    onClick=${() => setPrefs({ pip: value })}
+                                >
+                                    ${label}
+                                </button>`,
+                        )}
+                    </div>
+                <//>`
+            }
             <${SettingRow}
                 title="Motion"
                 detail="Auto follows your system's reduced-motion setting. Fluid adds springs, staggered entrances, and layout changes that morph"
@@ -790,6 +840,59 @@ export function AppearanceSheet() {
                     on=${p.foldActivity}
                     label="Keep activity folded"
                     onChange=${() => setPrefs({ foldActivity: !p.foldActivity })}
+                />
+            <//>
+            <${SettingRow}
+                title="Reply to a passage"
+                detail="Select words in one of Pi's replies, and a Reply button by them quotes them in your next message"
+            >
+                <${Switch}
+                    on=${p.quoteReply}
+                    label="Reply to a passage"
+                    onChange=${() => setPrefs({ quoteReply: !p.quoteReply })}
+                />
+            <//>
+            ${
+                p.quoteReply &&
+                html`<${SettingRow}
+                    title="Quotes in the message box"
+                    detail="How a passage you reply to shows. In the box, with your words: Fade, a tint that fades out to the right; Tint, a soft block; Ghost, faded words only. Separate: each in a strip over the box, sent first"
+                >
+                    <div class="segmented">
+                        ${QUOTE_STYLES.map(
+                            ([value, label]) =>
+                                html`<button
+                                    class=${quoteStyleOf(p) === value ? "on" : ""}
+                                    aria-pressed=${quoteStyleOf(p) === value}
+                                    onClick=${() => setPrefs({ quoteStyle: value })}
+                                >
+                                    ${label}
+                                </button>`,
+                        )}
+                    </div>
+                <//>`
+            }
+            ${
+                pipAvailable() &&
+                html`<${SettingRow}
+                    title="Ask PiP about a passage"
+                    detail="Select words in one of Pi's replies, and PiP's orb by them asks PiP about them, and tells it which session they came from"
+                >
+                    <${Switch}
+                        on=${p.askPipQuote}
+                        label="Ask PiP about a passage"
+                        onChange=${() => setPrefs({ askPipQuote: !p.askPipQuote })}
+                    />
+                <//>`
+            }
+            <${SettingRow}
+                title="Wait for updates"
+                detail="Going back to a session that changed while you were away: show it once its updates have come, instead of your last copy at once with the updates sliding in"
+            >
+                <${Switch}
+                    on=${p.waitForUpdates}
+                    label="Wait for updates"
+                    onChange=${() => setPrefs({ waitForUpdates: !p.waitForUpdates })}
                 />
             <//>
         </div>

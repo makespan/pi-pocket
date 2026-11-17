@@ -94,7 +94,7 @@ export class Shares {
 
             shares.push({
                 token,
-                path: `/pub/${token}`,
+                path: this.#app.url(`/pub/${token}`),
                 id: share.id,
                 title: meta.title,
                 type: meta.type,
@@ -178,7 +178,7 @@ export class Shares {
 
         return {
             token,
-            path: `/pub/${token}`,
+            path: this.#app.url(`/pub/${token}`),
             id,
             title: found.meta.title,
             type: found.meta.type,

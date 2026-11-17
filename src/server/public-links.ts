@@ -6,7 +6,7 @@
  * the address answers nothing.
  */
 import { randomBytes } from "node:crypto";
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { PocketApp } from "./app.ts";
 import { type PublicLink, PublicLinksDoc } from "./docs.ts";
@@ -41,7 +41,7 @@ export class PublicLinks {
 
     /** A link as its module sees it, with its address (the server's public one, when it knows it). */
     #info(token: string, link: PublicLink): PublicLinkInfo {
-        const path = `/l/${token}`;
+        const path = this.#app.url(`/l/${token}`);
         const base = this.#app.access?.url;
 
         return {

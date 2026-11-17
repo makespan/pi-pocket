@@ -251,12 +251,23 @@ The id of the session that this tab shows, a number as in its address (`/s/12`),
 ### `openConversation`
 
 ```ts
-openConversation(id: number | string): void;
+openConversation(id: number | string, options?: { artifact?: string; version?: number }): void;
 ```
 
 Since 0.16.0 · Stable
 
 Open a positive integer conversation id through normal app navigation. This closes the extension page and keeps normal Back behavior. Sheets close when changing conversations; call `pocket.closeSheet()` first to close your own sheet even when that conversation is already open. The server still checks access; an id grants no access. Invalid ids throw. Use a bound start's `session` or a human list item's `conversationId`, not a private app URL.
+
+`options.artifact` (since 0.29.0 · experimental) opens the app's artifact viewer on that artifact of the conversation, after the conversation opens. `options.version` is a positive integer; without it the viewer shows the latest version. It returns nothing. The server still checks access when the conversation loads, so a missing artifact or no access fails quietly, as in the Artifacts sheet. A `artifact` that is not a string, or a `version` that is not a positive integer, is ignored. Older apps ignore `options` and only open the conversation.
+
+```js
+// A page lists artifacts that agents made in other sessions: a tap opens one in the viewer.
+html`<button
+    onClick=${() => pocket.openConversation(ask.session, { artifact: "intake-502-check", version: 2 })}
+>
+    Read the plan
+</button>`;
+```
 
 ### `onConversation`
 
@@ -276,7 +287,7 @@ messages(options?: MessagesOptions): Promise<MessagePage>;
 
 Since 0.20.0 · Experimental
 
-Reads a page of the people's messages in the session the tab shows, oldest first: Pi's answers, tool calls, and notes are not in it. With no `before`, it is the newest `limit` messages (50 by default, up to 200). The page's `before` is the cursor for the page before it, and null at the start. Read pages until `before` is null to have them all. The messages are those of the transcript: after a New context, the earlier ones are not in it.
+Reads a page of the people's messages in the session the tab shows, oldest first: Pi's answers, tool calls, and notes are not in it. Neither is an input a module stored as its own kind, even while it shows as a message ([`web.presentEntry`](web.md#presententry)). A user message that a module's `userPrefix` presents stays in: it is a message to Pi, as it was before. With no `before`, it is the newest `limit` messages (50 by default, up to 200). The page's `before` is the cursor for the page before it, and null at the start. Read pages until `before` is null to have them all. The messages are those of the transcript: after a New context, the earlier ones are not in it.
 
 The server checks the person's access to the session for each page. A page is from the session that the tab showed when it was asked for (`conversationId`): compare it with the one shown now before you use it. It rejects with an error whose `status` is 409 when its cursor is stale, as after a compaction: read again from the newest. Abort it with `signal`. With no session open, or from a version of the module that is gone, the page is empty. See [`MessagesOptions`](#messagesoptions), [`MessagePage`](#messagepage), and [`MessageInfo`](#messageinfo).
 
@@ -321,6 +332,27 @@ pocket.sheet({
               );
     },
 });
+```
+
+### `entryPresentation`
+
+```ts
+entryPresentation(kind: string, mode: "open" | "folded" | "hidden"): void;
+entryPresentation(kind: string): "open" | "folded" | "hidden" | undefined;
+```
+
+Since 0.28.0 · Experimental
+
+How this browser shows one of this module's inputs (`web.presentEntry` on the server). `kind` is `x.<module>.<name>`. `open` shows the message. `folded` shows one line, which opens to the text: that is also how it shows when this browser has no choice. `hidden` keeps the turn and shows nothing until Find jumps to it. The model still reads the message in full.
+
+With a mode, it sets this browser's choice; the same mode again changes nothing. With the kind alone, it returns the choice, or undefined when there is none yet. A person can choose too: the message sheet of any of these rows has Show, Fold, and Hide for every input of its kind. So set a mode only when there is none, or from a command the person runs, and a person's choice stays theirs. The choice stays in this browser, and its other tabs follow it.
+
+A kind that is not this module's throws, and so does a mode that is not one of those three. This browser remembers a limited number of kinds; past it, the one chosen longest ago is forgotten ([limits](limits.md#presentations)). Where the browser cannot store it, the choice lasts until the tab reloads. On an older app, check for it first.
+
+```js
+if (typeof pocket.entryPresentation === "function" && !pocket.entryPresentation("x.notes.note")) {
+    pocket.entryPresentation("x.notes.note", "hidden");
+}
 ```
 
 ## Routes and events
@@ -547,6 +579,26 @@ pocket.composerKey({
     },
 });
 ```
+
+### `fence`
+
+```ts
+fence(spec: FenceSpec): Added<FenceSpec>;
+```
+
+Since 0.28.0 · Experimental
+
+Registers a component for one or more fenced-code languages. The app renders it with exactly `{ source, lang, streaming }`: the code text, the language label from the fence, and whether the Markdown is still streaming. The component uses the app's Preact and can use the Preact functions in `pocket`. Language matching ignores case. When registrations match the same language, the first one in server module order, then registration order, wins. See [`FenceSpec`](#fencespec), [`FenceProps`](#fenceprops), and [`Added`](#added).
+
+### `mathInline`
+
+```ts
+mathInline(spec: MathInlineSpec): Added<MathInlineSpec>;
+```
+
+Since 0.28.0 · Experimental
+
+Registers the renderer for inline `$…$` and display `$$…$$` math. The app calls `mount(element, source, display)` for each math element: `element` is the code element, `source` is the formula without delimiters, and `display` is true for display math. Math parsing is on only while a registration is active. When multiple registrations exist, the first one in server module order, then registration order, wins. See [`MathInlineSpec`](#mathinlinespec) and [`Added`](#added).
 
 ### `insertText`
 
@@ -1203,7 +1255,7 @@ What shows comes in layers, the last one wins: each item's default place, then t
 | Slot       | Ids, in their default order                                                                                                                                        | Fixed                                                                          | Modules' items go           |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ | --------------------------- |
 | `topbar`   | `core:subagents`, `core:changes`, `core:peeks`, `core:files`, `core:browser`, `core:artifacts`, `core:people`, `core:menu`                                         | `core:menu`, last                                                              | after `core:browser`        |
-| `status`   | `core:connection`, `core:here`, `core:speed`, `core:context`, `core:cache`, `core:spend`, `core:background`, `core:guard`                                          | `core:connection`, `core:guard`                                                | after `core:cache`          |
+| `status`   | `core:connection`, `core:schedules`, `core:here`, `core:speed`, `core:context`, `core:cache`, `core:spend`, `core:background`, `core:guard`                        | `core:connection`, `core:guard`                                                | after `core:cache`          |
 | `places`   | `core:files`, `core:changes`, `core:browser`, `core:artifacts`, `core:chat`, `core:find`, `core:launcher` (touch screens), `core:branch`, `core:pip`, `core:peeks` | none                                                                           | last: a tile for each panel |
 | `composer` | `core:places`, `core:attach`, `core:model`, `core:plan`                                                                                                            | none (Send, Stop, the mic, and Steer, Queue and Interrupt are not in the slot) | after `core:plan`           |
 | `reply`    | `core:time`, `core:react`, `core:discuss`, `core:pin`, `core:copy`, `core:more`                                                                                    | `core:more`, last                                                              | before `core:more`          |
@@ -1237,6 +1289,33 @@ type SheetProps<P extends object = object> = P & PageProps;
 Since 0.14.0 · Stable
 
 What a sheet's component gets: the fields of the `props` that `openSheet` gave, and `pocket` and `close`.
+
+### `FenceSpec`
+
+```ts
+interface FenceSpec {
+    id: string;
+    langs: string[];
+    component: ComponentType<FenceProps>;
+}
+```
+
+Since 0.28.0 · Experimental
+
+The registration's id, the code fence languages it handles, and the Preact component the app renders. Language matching ignores case. See [`FenceProps`](#fenceprops).
+
+### `MathInlineSpec`
+
+```ts
+interface MathInlineSpec {
+    id: string;
+    mount(element: HTMLElement, source: string, display: boolean): void;
+}
+```
+
+Since 0.28.0 · Experimental
+
+The registration's id and its math mounter. The app calls the mounter with the rendered code element, formula text without delimiters, and whether the formula uses display math.
 
 ### `ToolCallSpec`
 
@@ -1288,7 +1367,7 @@ interface Added<S> {
 
 Since 0.14.0 · Stable
 
-What `rail`, `menu`, `launcher`, `page`, and `sheet` return.
+What `rail`, `menu`, `launcher`, `page`, `sheet`, `fence`, and `mathInline` return.
 
 - `update`: changes the fields in `patch`. An update that changes nothing draws nothing again. Values count as the same only when they are the very same value: a new array or function is a change.
 - `remove`: removes what was added.
@@ -1334,6 +1413,20 @@ interface MarkdownProps {
 Since 0.14.0 · Stable
 
 `text` is the Markdown to show.
+
+### `FenceProps`
+
+```ts
+interface FenceProps {
+    source: string;
+    lang: string;
+    streaming: boolean;
+}
+```
+
+Since 0.28.0 · Experimental
+
+The exact props the app passes to a `pocket.fence` component. `source` is the code text, `lang` is the language label from the fence, and `streaming` says whether the Markdown is still streaming.
 
 ### `SwitchProps`
 

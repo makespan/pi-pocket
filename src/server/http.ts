@@ -3,30 +3,85 @@
  * modules and public pages, and the web app's own files. Each part lives in `http/`; this file routes a request to it and turns what it
  * throws into an answer.
  */
+import { requestPath } from "../base-path.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join, normalize, sep } from "node:path";
 import { Auth } from "./auth.ts";
+import { helloUser } from "./config.ts";
 import { describe, HttpError } from "./errors.ts";
 import { createApi } from "./http/api.ts";
 import { artifact } from "./http/artifacts.ts";
-import { publicArtifactBundle } from "./http/artifact-assets.ts";
+import { assetUser, publicArtifactBundle } from "./http/artifact-assets.ts";
+import { appleTouchIcon, iconAddress, iconRoute } from "./http/icon-route.ts";
 import { extensionFile } from "./http/extension-routes.ts";
 import { hookRoute } from "./http/hook-routes.ts";
 import { linkRoute } from "./http/link-routes.ts";
-import { serveApp, serveFile, VENDOR, WEB } from "./http/assets.ts";
+import {
+    KATEX_CSS,
+    KATEX_FONT,
+    katexFont,
+    serveApp,
+    serveFile,
+    serveManifest,
+    VENDOR,
+    WEB,
+} from "./http/assets.ts";
 import { type HttpOptions, json } from "./http/io.ts";
 import { join as joinPage, login, sharePage } from "./http/sign-in.ts";
 import { themeFile } from "./http/theme-routes.ts";
 
+/** The version of the app bridge the web app speaks (`web/host.js`). */
+const BRIDGE_VERSION = 1;
+
+/**
+ * Who is signed in, and this server's build, for the app page (`serveApp`): the same `user` a hello sends, so the tab
+ * can check a session the device kept (`usable`) before `/api/me` answers. Absent when signed out or caching is off.
+ */
+function pageFacts(
+    request: IncomingMessage,
+    auth: Auth,
+    app: HttpOptions["app"],
+): { user: ReturnType<typeof helloUser>; build: string } | undefined {
+    const user = auth.user(request);
+
+    return user === undefined || process.env.PI_POCKET_SESSION_CACHE === "off"
+        ? undefined
+        : { user: helloUser(user), build: app.build };
+}
+
 export function createHandler(options: HttpOptions) {
-    const { app } = options;
-    const auth = new Auth(app.config);
+    const { app, externalAuth } = options;
+    const auth = new Auth(app.config, externalAuth, app.basePath);
+
+    app.authenticationMode = auth.external ? "external" : "pairing";
     const api = createApi(options, auth);
 
     return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
-        const url = new URL(request.url ?? "/", "http://pocket.local");
-
         try {
+            const target = request.url ?? "/";
+            const rawPath = target.split("?", 1)[0]!;
+            const approvalPrefix = app.url("/api/approvals/");
+            // Codemode approval IDs contain slashes. Only this fixed non-filesystem POST route
+            // may encode them inside its final ID; they cannot change the selected dispatcher.
+            const opaqueApproval =
+                request.method === "POST" &&
+                rawPath.startsWith(approvalPrefix) &&
+                !rawPath.slice(approvalPrefix.length).includes("/");
+            const stripped = requestPath(target, app.basePath, opaqueApproval);
+
+            if (stripped === undefined) {
+                // Preserve the extension API's malformed-path response without dispatching it.
+                const extensionPath = rawPath.startsWith(app.url("/api/x/"));
+
+                throw new HttpError(
+                    extensionPath ? 400 : 404,
+                    extensionPath ? "Bad path" : "Not found",
+                );
+            }
+
+            const url = new URL(target, "http://pocket.local");
+
+            url.pathname = stripped;
             let path: string;
 
             try {
@@ -36,8 +91,39 @@ export function createHandler(options: HttpOptions) {
             }
 
             const parts = path.split("/").filter((part) => part !== "");
+            const read = request.method === "GET" || request.method === "HEAD";
+            const signedAsset =
+                read &&
+                parts[0] === "a" &&
+                parts.length >= 5 &&
+                assetUser(app, parts[1]!, parts[2]!, parts[3]!) !== undefined;
+            const publicAsset = read && parts[0] === "pub" && parts.length >= 3;
+            const publicForm =
+                request.method === "POST" &&
+                parts[0] === "l" &&
+                parts.length === 2 &&
+                String(request.headers["content-type"] ?? "")
+                    .split(";")[0]!
+                    .trim()
+                    .toLowerCase() === "application/x-www-form-urlencoded";
 
+            await externalAuth?.admit(
+                request,
+                app.config,
+                signedAsset || publicAsset || publicForm,
+            );
             response.setHeader("x-content-type-options", "nosniff");
+
+            if (auth.external && (parts[0] === "login" || parts[0] === "join")) {
+                throw new HttpError(403, "Pairing is disabled by external authentication");
+            }
+
+            // What an embedder (an app that shows Pi Pocket) asks before it signs in: that this is
+            // Pi Pocket, and which version of the app bridge its page speaks (`web/host.js`,
+            // docs/embedders.md). No version of Pi Pocket, ever.
+            if (path === "/api/pocket/info" && request.method === "GET") {
+                return json(response, 200, { name: "pi-pocket", bridge: BRIDGE_VERSION });
+            }
 
             if (parts[0] === "api") {
                 return await api(request, response, url, parts.slice(1));
@@ -101,6 +187,41 @@ export function createHandler(options: HttpOptions) {
                 );
             }
 
+            // The app icon in chosen colors, for the home screen (`web/app-icon.js`): a fetch by the phone, no sign-in.
+            if (parts.length === 1 && parts[0] === "app-icon.png") {
+                return iconRoute(request, response, url);
+            }
+
+            // The icon a phone fetches itself, in the owner's colors (`icon-store.ts`).
+            if (
+                parts.length === 1 &&
+                parts[0] === "apple-touch-icon.png" &&
+                (request.method === "GET" || request.method === "HEAD") &&
+                appleTouchIcon(request, response, app.dataDir, app.basePath)
+            ) {
+                return;
+            }
+
+            // The manifest for this mount, with the icons of the colors this browser chose when it has chosen
+            // (`http/icon-route.ts`).
+            if (parts.length === 1 && parts[0] === "manifest.webmanifest") {
+                return serveManifest(request, response, app.basePath, app.dataDir);
+            }
+
+            if (parts[0] === "vendor" && parts[1] === "katex.css" && parts.length === 2) {
+                return await serveFile(request, response, KATEX_CSS, "text/css; charset=utf-8");
+            }
+
+            // Only the names the stylesheet asks for: nothing else under the package is reachable.
+            if (
+                parts[0] === "vendor" &&
+                parts[1] === "fonts" &&
+                parts.length === 3 &&
+                KATEX_FONT.test(parts[2]!)
+            ) {
+                return await serveFile(request, response, katexFont(parts[2]!), "font/woff2");
+            }
+
             if (parts[0] === "login" && (request.method === "GET" || request.method === "POST")) {
                 return await login(auth, request, response, url);
             }
@@ -112,12 +233,18 @@ export function createHandler(options: HttpOptions) {
             // Shares from other apps go to the service worker (web/sw.js). One that reaches the server came before the
             // worker was installed on this device; nothing here knows where it should go.
             if (parts[0] === "share" && request.method === "POST") {
-                return sharePage(response);
+                return sharePage(response, app.basePath);
             }
 
-            // The web app: index.html for app routes, files from web/ otherwise.
+            // The web app: index.html for app routes, files from web/ otherwise. Who is signed in, and this
+            // server's build, go in the page (`serveApp`): the tab checks a session the device kept before `/api/me`.
             if (parts.length === 0 || parts[0] === "s") {
-                return serveApp(response);
+                return serveApp(
+                    response,
+                    app.basePath,
+                    iconAddress(request, app.dataDir, app.basePath),
+                    pageFacts(request, auth, app),
+                );
             }
 
             const file = normalize(join(WEB, ...parts));
@@ -127,7 +254,12 @@ export function createHandler(options: HttpOptions) {
             }
 
             if (file === join(WEB, "index.html")) {
-                return serveApp(response);
+                return serveApp(
+                    response,
+                    app.basePath,
+                    iconAddress(request, app.dataDir, app.basePath),
+                    pageFacts(request, auth, app),
+                );
             }
 
             return await serveFile(request, response, file);

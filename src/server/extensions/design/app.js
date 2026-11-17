@@ -1,5 +1,5 @@
 // The workspace of Design: `index.js` loads this file when the panel first opens, not at the app's start.
-import { openSheet, store as app } from "/store.js";
+import { openSheet, store as app } from "#pocket/store";
 import { createData, designsOf } from "./data.js";
 import { clampSize } from "./devices.js";
 import { variationMessage } from "./messages.js";

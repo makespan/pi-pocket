@@ -10,7 +10,7 @@ import QRCode from "qrcode";
 import { MAX_PEEKS } from "../app.ts";
 import {
     type Auth,
-    COOKIE,
+    authCookieName,
     clearAuthCookie,
     INVITE_MINUTES,
     type InviteGrant,
@@ -20,15 +20,24 @@ import {
     quickTunnelHost,
 } from "../auth.ts";
 import type { User } from "../config.ts";
+import { MAX_AVATAR, readAvatar } from "../avatars.ts";
 import { HttpError } from "../errors.ts";
 import { desktopTheme, wallpaperFile } from "../omarchy.ts";
-import { runningNow } from "../running.ts";
+import { runningBoard, runningNow } from "../running.ts";
 import { serveImage } from "./assets.ts";
 import { browserRoutes } from "./browser-routes.ts";
 import { conversationRoutes } from "./conversation-routes.ts";
-import { createEventStreams } from "./events.ts";
+import { createEventStreams, keptPart } from "./events.ts";
 import { extensionRoute } from "./extension-routes.ts";
-import { type ApiRequest, conversationId, type HttpOptions, json, readJson } from "./io.ts";
+import { isIconColors, storeIconColors } from "../icon-store.ts";
+import {
+    type ApiRequest,
+    conversationId,
+    type HttpOptions,
+    json,
+    readBody,
+    readJson,
+} from "./io.ts";
 import { pushRoutes } from "./push-routes.ts";
 
 /** This machine's non-internal IPv4 addresses, for invite links other devices on its networks can open. */
@@ -110,7 +119,7 @@ export function createApi(options: HttpOptions, auth: Auth) {
         if (
             user.role === "owner" ||
             user.tunnel !== undefined ||
-            !parseCookies(request.headers.cookie)[COOKIE]
+            !parseCookies(request.headers.cookie)[authCookieName(app.basePath)]
         ) {
             return;
         }
@@ -131,13 +140,20 @@ export function createApi(options: HttpOptions, auth: Auth) {
         const method = request.method ?? "GET";
         const user = requireUser(request);
 
-        noteTunnel(request, user);
+        if (!auth.external) {
+            noteTunnel(request, user);
+        }
 
         if (method !== "GET" && request.headers["x-pocket"] !== "1") {
             throw new HttpError(403, "Missing X-Pocket header");
         }
 
         const [first, second, third, fourth] = parts;
+
+        if (auth.external && (first === "invite" || first === "logout")) {
+            throw new HttpError(403, "Pairing is disabled by external authentication");
+        }
+
         const route: ApiRequest = { app, request, response, url, user };
 
         if (first === "events" && method === "GET") {
@@ -152,7 +168,7 @@ export function createApi(options: HttpOptions, auth: Auth) {
             return json(response, 200, await app.hello(user));
         }
 
-        if (first === "me" && method === "POST") {
+        if (first === "me" && second === undefined && method === "POST") {
             const body = await readJson<{ name?: string }>(request);
             const name = String(body.name ?? "")
                 .replace(/\s+/g, " ")
@@ -168,6 +184,40 @@ export function createApi(options: HttpOptions, auth: Auth) {
             return json(response, 200, { ok: true });
         }
 
+        if (first === "me" && second === "avatar" && method === "POST") {
+            app.setAvatar(user, await readBody(request, MAX_AVATAR));
+
+            return json(response, 200, { ok: true });
+        }
+
+        if (first === "me" && second === "avatar" && method === "DELETE") {
+            app.setAvatar(user, undefined);
+
+            return json(response, 200, { ok: true });
+        }
+
+        // A picture of anyone this person may see in the people list.
+        if (first === "avatar" && second !== undefined && method === "GET") {
+            const picture = app.people(user).some((each) => each.id === second)
+                ? readAvatar(app.dataDir, second)
+                : undefined;
+
+            if (picture === undefined) {
+                throw new HttpError(404, "No picture");
+            }
+
+            // The address carries the picture's version, so a copy never goes stale.
+            response.writeHead(200, {
+                "content-type": picture.type,
+                "content-length": picture.bytes.length,
+                "cache-control": "private, max-age=31536000, immutable",
+                "x-content-type-options": "nosniff",
+            });
+            response.end(picture.bytes);
+
+            return;
+        }
+
         if (first === "folder-favorites" && second === undefined && method === "GET") {
             return json(response, 200, await app.folderFavorites.list(user));
         }
@@ -179,7 +229,7 @@ export function createApi(options: HttpOptions, auth: Auth) {
         }
 
         if (first === "logout" && method === "POST") {
-            clearAuthCookie(response);
+            clearAuthCookie(response, app.basePath);
 
             return json(response, 200, { ok: true });
         }
@@ -228,6 +278,36 @@ export function createApi(options: HttpOptions, auth: Auth) {
                 body.ids.slice(0, MAX_PEEKS).map((id) => conversationId(String(id))),
                 body.seq as number | undefined,
             );
+
+            return json(response, 200, { ok: true });
+        }
+
+        // A tab shows another session, or the list (`c` null), on the connection it has; `have` is what it kept of it.
+        if (first === "switch" && method === "POST") {
+            const body = await readJson<{
+                connection?: unknown;
+                c?: unknown;
+                have?: unknown;
+                seq?: unknown;
+            }>(request);
+
+            if (!Number.isSafeInteger(body.seq)) {
+                throw new HttpError(400, "seq must be a whole number");
+            }
+
+            const switched = app.switchTo(
+                user,
+                String(body.connection ?? ""),
+                body.c === null || body.c === undefined
+                    ? undefined
+                    : conversationId(String(body.c)),
+                keptPart(typeof body.have === "string" ? body.have : null),
+                body.seq as number,
+            );
+
+            if (!switched) {
+                throw new HttpError(409, "This connection is not open");
+            }
 
             return json(response, 200, { ok: true });
         }
@@ -298,6 +378,12 @@ export function createApi(options: HttpOptions, auth: Auth) {
             return json(response, 200, { ok: true });
         }
 
+        if (first === "hooks" && second !== undefined && third === undefined && method === "POST") {
+            const body = await readJson<{ instructions?: unknown }>(request);
+
+            return json(response, 200, await app.hooks.update(user, second, body.instructions));
+        }
+
         // A new secret, for a hook whose address or secret got out.
         if (first === "hooks" && second !== undefined && third === "rotate" && method === "POST") {
             return json(response, 200, await app.hooks.rotate(user, second));
@@ -353,6 +439,21 @@ export function createApi(options: HttpOptions, auth: Auth) {
 
         // Theme folders (`themes.ts`): everyone signed in lists them, as everyone chooses one for their own browsers;
         // only the owner adds, edits, and removes them.
+        // The app icon's colors, which the owner's browser reports for the requests that carry no cookie (`icon-store.ts`).
+        if (first === "app-icon" && second === undefined && method === "PUT") {
+            requireOwner(user);
+
+            const { colors } = await readJson<{ colors?: unknown }>(request);
+
+            if (!isIconColors(colors)) {
+                throw new HttpError(400, "Colors are five hex colors joined by dots");
+            }
+
+            storeIconColors(app.dataDir, colors);
+
+            return json(response, 200, { ok: true });
+        }
+
         if (first === "themes" && second === undefined && method === "GET") {
             return json(response, 200, { themes: app.themes.list(user.role === "owner") });
         }
@@ -423,6 +524,10 @@ export function createApi(options: HttpOptions, auth: Auth) {
             return serveImage(request, response, file);
         }
 
+        if (first === "running" && second === "board" && method === "GET") {
+            return json(response, 200, await runningBoard(app, user));
+        }
+
         if (first === "running" && method === "GET") {
             return json(response, 200, await runningNow(app, user));
         }
@@ -453,6 +558,10 @@ export function createApi(options: HttpOptions, auth: Auth) {
 
         if (first === "sessions" && second === undefined && method === "GET") {
             return json(response, 200, app.sessions(user));
+        }
+
+        if (first === "artifacts" && second === undefined && method === "GET") {
+            return json(response, 200, await app.artifactOverview(user));
         }
 
         // Pi's sessions from the terminal, which the owner can continue here.
@@ -493,9 +602,13 @@ export function createApi(options: HttpOptions, auth: Auth) {
         if (first === "sessions" && second !== undefined && method === "POST") {
             const body = await readJson<{ title?: string; archived?: boolean }>(request);
 
-            await app.commands.updateSession(conversationId(second), user, body);
+            const { repeating } = await app.commands.updateSession(
+                conversationId(second),
+                user,
+                body,
+            );
 
-            return json(response, 200, { ok: true });
+            return json(response, 200, { ok: true, repeating });
         }
 
         if (first === "c" && second !== undefined) {
@@ -504,7 +617,12 @@ export function createApi(options: HttpOptions, auth: Auth) {
             app.requireSee(user, id);
 
             if (third === "browser") {
-                return browserRoutes(route, id, fourth, options.listen.port);
+                return browserRoutes(
+                    route,
+                    id,
+                    fourth,
+                    "port" in options.listen ? options.listen.port : undefined,
+                );
             }
 
             return conversationRoutes(route, id, parts);
@@ -540,8 +658,21 @@ export function createApi(options: HttpOptions, auth: Auth) {
             const path = app.workspace.checkDirectory(requested);
             const showHidden = url.searchParams.get("hidden") === "1";
             const dirs: { name: string; path: string }[] = [];
+            let entries;
 
-            for (const entry of readdirSync(path, { withFileTypes: true })) {
+            try {
+                entries = readdirSync(path, { withFileTypes: true });
+            } catch (error) {
+                const code = (error as NodeJS.ErrnoException).code;
+
+                if (code === "EACCES" || code === "EPERM") {
+                    throw new HttpError(403, `Pi Pocket cannot read ${path}.`);
+                }
+
+                throw error;
+            }
+
+            for (const entry of entries) {
                 if (!showHidden && entry.name.startsWith(".")) {
                     continue;
                 }
@@ -562,10 +693,12 @@ export function createApi(options: HttpOptions, auth: Auth) {
             }
 
             dirs.sort((a, b) => a.name.localeCompare(b.name));
-            const recent = [...new Set(app.sessions(user).map((session) => session.cwd))].slice(
-                0,
-                8,
-            );
+            // A workspace URI is not a folder the picker can open: its provider's module starts sessions there.
+            const local = app
+                .sessions(user)
+                .map((session) => session.cwd)
+                .filter((cwd) => app.workspaceScheme(cwd) === undefined);
+            const recent = [...new Set(local)].slice(0, 8);
 
             return json(response, 200, {
                 path,
@@ -718,6 +851,36 @@ export function createApi(options: HttpOptions, auth: Auth) {
             return json(response, 200, await app.providers.modelRefresh.refresh());
         }
 
+        // OpenAI-compatible endpoints, in Pi's models.json: the owner's alone, as they hold keys and decide models.
+        if (first === "custom-providers") {
+            requireOwner(user);
+            const providers = app.customProviders;
+
+            if (second === undefined && method === "GET") {
+                return json(response, 200, providers.list());
+            }
+
+            if (second === undefined && method === "POST") {
+                return json(response, 200, await providers.create(await readJson(request)));
+            }
+
+            if (second === "discover" && third === undefined && method === "POST") {
+                return json(response, 200, {
+                    models: await providers.discover(await readJson(request)),
+                });
+            }
+
+            if (second !== undefined && third === undefined && method === "PUT") {
+                return json(response, 200, await providers.update(second, await readJson(request)));
+            }
+
+            if (second !== undefined && third === undefined && method === "DELETE") {
+                await providers.remove(second);
+
+                return json(response, 200, { ok: true });
+            }
+        }
+
         // For the owner, each subscription's sign-in is asked afresh first (three seconds at most; a mark found later
         // comes with the models): one that can no longer be renewed shows as needing sign-in. Others see what was last
         // found, so nobody else makes the server ask providers.
@@ -803,15 +966,16 @@ export function createApi(options: HttpOptions, auth: Auth) {
             const loopback = /^https?:\/\/(localhost|127\.\d+\.\d+\.\d+|\[::1\])(:\d+)?$/.test(
                 here,
             );
-            const wildcard = options.listen.host === "0.0.0.0" || options.listen.host === "::";
+            const { listen } = options;
+            // A Unix socket has no address of its own: the gateway's public address (here) is the way in.
             const lan =
-                loopback && wildcard
-                    ? lanAddresses().map((address) => `http://${address}:${options.listen.port}`)
+                "port" in listen && loopback && (listen.host === "0.0.0.0" || listen.host === "::")
+                    ? lanAddresses().map((address) => `http://${address}:${listen.port}`)
                     : [];
             // A tunnel the launcher started is the way in for other devices.
             const tunnel = loopback ? app.access?.url : undefined;
             const base = tunnel ?? lan[0] ?? here;
-            const link = `${base}/join/${invite.code}`;
+            const link = `${base}${app.url(`/join/${invite.code}`)}`;
             // An invite whose QR code could not be made is never shown: it ends rather than stay live, unseen.
             const svg = await QRCode.toString(link, {
                 type: "svg",
@@ -829,7 +993,7 @@ export function createApi(options: HttpOptions, auth: Auth) {
                 url: link,
                 svg,
                 alternatives: (tunnel === undefined ? lan.slice(1) : lan).map(
-                    (address) => `${address}/join/${invite.code}`,
+                    (address) => `${address}${app.url(`/join/${invite.code}`)}`,
                 ),
                 // Only this device can open a loopback link.
                 local: loopback && lan.length === 0 && tunnel === undefined,

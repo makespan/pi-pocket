@@ -1,9 +1,11 @@
+import { appUrl } from "../base-path.js";
 // The menu: what can be done in this session and in the app.
 import { useLayoutEffect, useRef } from "preact/hooks";
 import { browserAvailable, displayUrl, setBrowserOpen } from "../browser.js";
 import { chatUnread } from "../chat.js";
 import { schedulesAvailable, triggersOn, watchAvailable, watchPr } from "../commands.js";
 import { extensionMenuItems, safeMode } from "../extension-ui.js";
+import { hostMenu } from "../embedder.js";
 import { useChanges } from "../diff.js";
 import { filesAvailable, setFilesOpen } from "../files-panel.js";
 import { peeksOn, togglePeeks } from "../peeks.js";
@@ -21,6 +23,7 @@ import {
     collab,
     navigate,
     notify,
+    openRunning,
     openSheet,
     scoped,
     setUnread,
@@ -39,6 +42,20 @@ import { copyText, html, Icon, item, PlaceTile, Sheet, shortPath } from "../ui.j
 const touch = matchMedia("(pointer: coarse)").matches;
 
 /** The Extensions row's hint: that this tab loads none of their browser parts (safe mode), and Lancet Guard. */
+/** The menu's word on the session's schedules: how many go out, and how many are paused. */
+function schedulesHint(schedules) {
+    const paused = schedules.filter((each) => each.paused !== undefined).length;
+    const coming = schedules.length - paused;
+
+    if (schedules.length === 0) {
+        return "none";
+    }
+
+    return [coming > 0 && `${coming} coming`, paused > 0 && `${paused} paused`]
+        .filter(Boolean)
+        .join(" · ");
+}
+
 function extensionsHint() {
     const { guard } = store.state;
 
@@ -405,6 +422,9 @@ export function MenuSheet({ places = true }) {
     const instructions = view.agent?.instructions;
     const memory = useMemory();
 
+    // The embedder this page runs in adds its own group at the end, below App, under its own title (`embedder.js`).
+    const embedder = hostMenu();
+
     return html`<${MenuFrame} title=${conversation?.title ?? "Menu"}>
         ${places && html`<${Places} />`}
         <div class="menu-session">
@@ -484,7 +504,7 @@ export function MenuSheet({ places = true }) {
             ${conversation && steer && driving && item("Compact context", () => openSheet({ type: "compact" }), "summarize older messages")}
             ${conversation && steer && driving && item("New context", () => openSheet({ type: "reset" }), "Pi starts fresh; history stays")}
             ${conversation && memoryAvailable() && item("Memory", () => openSheet({ type: "memory" }), memoryHint(memory))}
-            ${schedulesAvailable() && item("Scheduled messages", () => openSheet({ type: "schedules" }), view.schedules.length === 0 ? "none" : `${view.schedules.length} coming`)}
+            ${schedulesAvailable() && item("Scheduled messages", () => openSheet({ type: "schedules" }), schedulesHint(view.schedules))}
             ${
                 watchAvailable() &&
                 steer &&
@@ -509,7 +529,7 @@ export function MenuSheet({ places = true }) {
             }
             ${
                 conversation &&
-                html`<a class="list-item" href=${`/api/c/${conversation.id}/export`} download>
+                html`<a class="list-item" href=${appUrl(`/api/c/${conversation.id}/export`)} download>
                     <span>Export as Markdown</span>
                     <span class="muted small">the whole history</span>
                 </a>`
@@ -553,7 +573,8 @@ export function MenuSheet({ places = true }) {
             ${item("Your name", () => openSheet({ type: "name" }), me?.name)}
             ${collab() ? item("People", () => openSheet({ type: "people" }), me?.role === "viewer" ? "you can view" : "") : item("Sign in another device", () => openSheet({ type: "invite" }))}
             ${collab() && item("Notifications", () => openSheet({ type: "notifications" }), "Pi finished, approvals, chat")}
-            ${item("Running now", () => openSheet({ type: "running" }), "everything Pi is doing")}
+            ${item("Running now", openRunning, "everything Pi is doing")}
+            ${view.conversation && item("Background", () => openSheet({ type: "background" }), "what commands print as they run")}
             ${item("Spend", () => openSheet({ type: "spend" }), me?.role === "owner" ? "by person and session, limits" : "yours")}
             ${triggersOn() && me?.role !== "viewer" && item("Webhooks and watches", () => openSheet({ type: "hooks" }), "GitHub, other services")}
             ${me?.role === "owner" && item("Providers", () => openSheet({ type: "providers" }))}
@@ -574,7 +595,14 @@ export function MenuSheet({ places = true }) {
                     "running work resumes",
                 )
             }
-            ${item(html`<span class="menu-signout">Sign out</span>`, signOut)}
+            ${server?.authenticationMode !== "external" && item(html`<span class="menu-signout">Sign out</span>`, signOut)}
         </div>
+        ${
+            embedder.items.length > 0 &&
+            html`<div class="group">
+                ${embedder.title && html`<div class="group-title">${embedder.title}</div>`}
+                ${embedder.items.map((each) => item(each.label, each.run, each.hint))}
+            </div>`
+        }
     <//>`;
 }

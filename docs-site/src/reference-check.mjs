@@ -28,6 +28,8 @@ const HEADED = new Map([
     ["BrowserModule", ""],
     ["SafeText", "text."],
     ["LinkedSessions", "linkedSessions."],
+    ["Sessions", "sessions."],
+    ["InboxApi", "inbox."],
 ]);
 
 /** Which types each page describes. */
@@ -38,6 +40,8 @@ export const PAGES = {
         "PublicFetchInit",
         "LinkedSessions",
         "LinkedSession",
+        "Sessions",
+        "InboxApi",
         "AskRequest",
         "AskField",
         "AskAnswer",
@@ -56,10 +60,14 @@ export const PAGES = {
         "WebRequest",
         "WebSession",
         "ConversationWebRequest",
+        "ConversationWebRequest.conversationUsage",
+        "UsageTotals",
+        "ConversationUsage",
         "HumanLinkedSessions",
         "HumanLinkedSession",
         "WebMethod",
         "WebAccess",
+        "PresentEntry",
         "PublicPageHandler",
         "PublicPageAnswer",
         "PublicPageRequest",
@@ -97,6 +105,9 @@ export const PAGES = {
         "PipApi",
         "PipAskResult",
         "ComposerKeySpec",
+        "FenceSpec",
+        "MathInlineSpec",
+        "FenceProps",
         "ComposerBox",
         "SlotName",
         "Arrangement",
@@ -111,7 +122,7 @@ export const PAGES = {
         "SwitchProps",
     ],
     "command-context.md": ["Command", "CommandContext", "CommandResult"],
-    "types.md": ["Module", "Person", "Role", "NoticeLevel"],
+    "types.md": ["Module", "ToolOptions", "Person", "Role", "NoticeLevel"],
 };
 
 function meta(node) {
@@ -156,6 +167,14 @@ function expected(source) {
         }
 
         owners.set(name, headings);
+
+        if (ts.isInterfaceDeclaration(statement)) {
+            for (const member of statement.members) {
+                const key = `${name}.${member.name?.getText(file)}`;
+
+                owners.set(key, new Map([[key, meta(member)]]));
+            }
+        }
     }
 
     return owners;

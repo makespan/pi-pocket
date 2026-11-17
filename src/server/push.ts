@@ -27,6 +27,8 @@ export type PushPrefs = {
     mention: boolean;
     /** A run began to wait a long while for a provider's limit to clear (`limit-gate.ts`). */
     limit: boolean;
+    /** Work passed a hard limit with no progress (a stalled subagent): for the owner. */
+    stalled: boolean;
 };
 export const DEFAULT_PREFS: PushPrefs = Object.freeze({
     done: true,
@@ -34,6 +36,7 @@ export const DEFAULT_PREFS: PushPrefs = Object.freeze({
     chat: true,
     mention: true,
     limit: true,
+    stalled: true,
 });
 export type StoredSubscription = PushSubscriptionJson & {
     userId: string;
@@ -49,6 +52,16 @@ export type PushMessage = {
     approval?: { id: string; allow: boolean };
 };
 export type Urgency = "very-low" | "low" | "normal" | "high";
+/**
+ * A notification as an embedder gets it over its live connection (`embedder-notify`,
+ * `PocketApp.notifyEmbedders`): the push message, its urgency, and for an approval the whole call
+ * and whether this person may allow it, so that the embedder decides how much of it to show and whether
+ * to offer Allow (docs/embedders.md).
+ */
+export type EmbedderMessage = PushMessage & {
+    urgency: Urgency;
+    approval?: { id: string; allow: boolean; may: boolean; call: string };
+};
 
 const DEFAULT_SUBJECT = "mailto:pi-pocket@example.com";
 const DEFAULT_RECORD_SIZE = 4096;

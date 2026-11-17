@@ -1,9 +1,11 @@
+import { appUrl, localStore as localStorage } from "./base-path.js";
 // The Browser panel: the session's page in the server's browser, the same one Pi uses with its browser tool. Frames
 // come as JPEGs by long polling (which passes any tunnel); taps, drags, scrolls, and keys go back as input events. Wide
 // screens show it as a window beside the conversation; phones show it full screen.
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useBack } from "./back.js";
+import { screenPaste } from "./browser-paste.js";
 import {
     browserApi,
     browserAvailable,
@@ -14,7 +16,7 @@ import {
     toggleBrowser,
 } from "./browser.js";
 import { api, attempt, canSteer, notify, panelsBeside, store } from "./store.js";
-import { APPLE, html, Icon, Spinner } from "./ui.js";
+import { APPLE, dragWidth, html, Icon, Spinner } from "./ui.js";
 
 const WIDTH_KEY = "pocket.browserWidth";
 
@@ -84,7 +86,7 @@ function useFrames(conversationId, active) {
 
                 try {
                     const response = await fetch(
-                        `/api/c/${conversationId}/browser/frame?after=${seq}`,
+                        appUrl(`/api/c/${conversationId}/browser/frame?after=${seq}`),
                         { signal: request.signal, cache: "no-store" },
                     );
 
@@ -293,6 +295,28 @@ function Screen({ frame, interactive, send }) {
         return () => element.removeEventListener("wheel", wheel);
     }, [interactive, send]);
 
+    // Firefox gives a paste to the element it last edited, not the focused screen: take it on the document, in
+    // the capture phase, before that element's own paste handler (the composer's) can act on it.
+    useEffect(() => {
+        if (!interactive) {
+            return undefined;
+        }
+
+        const paste = (event) => {
+            const text = screenPaste(event, ref.current, document.activeElement);
+
+            if (text !== null) {
+                event.preventDefault();
+                event.stopPropagation();
+                send({ type: "text", text });
+            }
+        };
+
+        document.addEventListener("paste", paste, true);
+
+        return () => document.removeEventListener("paste", paste, true);
+    }, [interactive, send]);
+
     if (!interactive) {
         return html`<img
             class="browser-screen"
@@ -428,17 +452,6 @@ function Screen({ frame, interactive, send }) {
         send({ type: "key", key: event.key, modifiers });
     };
 
-    const paste = (event) => {
-        const text = event.clipboardData?.getData("text") ?? "";
-
-        if (text === "") {
-            return;
-        }
-
-        event.preventDefault();
-        send({ type: "text", text });
-    };
-
     return html`<img
         ref=${ref}
         class="browser-screen live"
@@ -452,7 +465,6 @@ function Screen({ frame, interactive, send }) {
         onPointerCancel=${() => (drag.current = null)}
         onContextMenu=${(event) => event.preventDefault()}
         onKeyDown=${key}
-        onPaste=${paste}
     />`;
 }
 
@@ -660,31 +672,19 @@ function ResizeEdge() {
         }
 
         event.preventDefault();
-        const root = document.documentElement;
-        const right = event.currentTarget.parentElement.getBoundingClientRect().right;
-        let width = 0;
+        const panel = event.currentTarget.parentElement;
+        const right = panel.getBoundingClientRect().right;
 
-        root.classList.add("resizing");
-
-        const move = (each) => {
-            width = Math.round(Math.min(innerWidth - 420, Math.max(360, right - each.clientX)));
-            root.style.setProperty("--browser-w", `${width}px`);
-        };
-
-        const stop = () => {
-            root.classList.remove("resizing");
-            removeEventListener("pointermove", move);
-            removeEventListener("pointerup", stop);
-            removeEventListener("pointercancel", stop);
-
-            if (width > 0) {
+        dragWidth(event, {
+            element: panel,
+            property: "flex-basis",
+            widthAt: (each) =>
+                Math.round(Math.min(innerWidth - 420, Math.max(360, right - each.clientX))),
+            done: (width) => {
+                document.documentElement.style.setProperty("--browser-w", `${width}px`);
                 localStorage.setItem(WIDTH_KEY, String(width));
-            }
-        };
-
-        addEventListener("pointermove", move);
-        addEventListener("pointerup", stop);
-        addEventListener("pointercancel", stop);
+            },
+        });
     };
 
     const reset = () => {

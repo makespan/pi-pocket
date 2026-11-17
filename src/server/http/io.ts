@@ -3,6 +3,7 @@ import { closeSync, constants, fstatSync, openSync, readFileSync, readlinkSync }
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import type { PocketApp } from "../app.ts";
+import type { ExternalAuth } from "../auth-provider.ts";
 import type { User } from "../config.ts";
 import { HttpError } from "../errors.ts";
 import { accepted, compressed, compressible, MIN_COMPRESS_BYTES } from "./compress.ts";
@@ -14,8 +15,13 @@ export const SVG_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'";
 
 export interface HttpOptions {
     app: PocketApp;
-    /** Where the server listens, to offer reachable invite links when the browser uses a loopback address. */
-    listen: { host: string; port: number };
+    /** Required startup-loaded policy, if this instance does not use pairing. */
+    externalAuth?: ExternalAuth;
+    /**
+     * Where the server listens: a TCP address, to offer reachable invite links when the browser uses a loopback address,
+     * or a Unix socket behind a gateway, which has no address of its own to offer.
+     */
+    listen: { host: string; port: number } | { socket: string };
     /** Restart the process (exit code 75 under the launcher). */
     restart(): void;
 }
@@ -65,7 +71,15 @@ export function json(response: ServerResponse, status: number, value: unknown): 
 /** How long a JSON or form body may take to arrive: a client that stops sending must not hold the connection. */
 const BODY_TIMEOUT_MS = 60_000;
 
-export async function readBody(request: IncomingMessage, limit: number): Promise<Buffer> {
+/**
+ * A request's body, up to `limit` bytes. `signal` is for a caller that stops waiting for it: its abort ends the body's
+ * own deadline, which would otherwise keep the process alive and close the connection a minute later.
+ */
+export async function readBody(
+    request: IncomingMessage,
+    limit: number,
+    signal?: AbortSignal,
+): Promise<Buffer> {
     if (Number(request.headers["content-length"] ?? 0) > limit) {
         throw new HttpError(413, "Request too large");
     }
@@ -74,6 +88,8 @@ export async function readBody(request: IncomingMessage, limit: number): Promise
         () => request.destroy(new HttpError(408, "The request body took too long")),
         BODY_TIMEOUT_MS,
     );
+
+    signal?.addEventListener("abort", () => clearTimeout(timer), { once: true });
 
     try {
         const chunks: Buffer[] = [];

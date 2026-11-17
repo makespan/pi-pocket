@@ -1,6 +1,6 @@
 // What can fill the canvas besides the live page: two versions side by side, a group's variations as a grid, the slide
 // strip of a deck, and the full-screen present mode.
-import { useArtifactBridge } from "/artifact-bridge.js";
+import { useArtifactBridge } from "#pocket/artifact-bridge";
 import { scaleOf, zoomOf } from "./devices.js";
 import { ALLOW, frameUrl, SANDBOX } from "./canvas.js";
 

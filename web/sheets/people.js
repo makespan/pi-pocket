@@ -1,6 +1,7 @@
+import { appUrl } from "../base-path.js";
 // People with access to this server, and invites for more.
 import { useEffect, useRef, useState } from "preact/hooks";
-import { Avatar } from "../avatar.js";
+import { Avatar, avatarBlob } from "../avatar.js";
 import {
     actions,
     api,
@@ -33,7 +34,7 @@ const cancelInvite = (invite) => {
     // A server that says how long its invites last also ends them on request; an older one has no such route.
     if (invite?.minutes !== undefined) {
         // Sent even when the page goes (a reload, a web file edited), so it is never left live and unseen.
-        fetch("/api/invite/cancel", {
+        fetch(appUrl("/api/invite/cancel"), {
             method: "POST",
             keepalive: true,
             headers: { "X-Pocket": "1", "content-type": "application/json" },
@@ -310,6 +311,40 @@ function lastSeen(person) {
     return `seen ${timeAgo(person.lastSeen)}${timeAgo(person.lastSeen) === "now" ? "" : " ago"}`;
 }
 
+/** Your own picture: choose one (cropped and shrunk here before it is sent), or take it away. */
+export function MyPhoto() {
+    const { me, users } = store.state;
+    const person = users.find((each) => each.id === me?.id) ?? me;
+    const input = useRef(null);
+
+    const choose = (event) => {
+        const file = event.currentTarget.files?.[0];
+
+        event.currentTarget.value = "";
+
+        if (file) {
+            attempt(async () => api("me/avatar", await avatarBlob(file)));
+        }
+    };
+
+    return html`<div class="my-photo">
+        <${Avatar} person=${person} size=${48} />
+        <input ref=${input} type="file" accept="image/*" hidden onChange=${choose} />
+        <button class="button" onClick=${() => input.current.click()}>
+            ${person.avatar ? "Change photo" : "Add photo"}
+        </button>
+        ${
+            person.avatar &&
+            html`<button
+                class="button ghost"
+                onClick=${() => attempt(() => api("me/avatar", undefined, { method: "DELETE" }))}
+            >
+                Remove photo
+            </button>`
+        }
+    </div>`;
+}
+
 /** Everyone with access: who is online, when the others were last here, and (for the owner) what each may do. */
 function PeopleList() {
     const { me, users, sessions } = store.state;
@@ -394,7 +429,8 @@ function PeopleList() {
 }
 
 export function PeopleSheet() {
-    const canInvite = canSteer() && !scoped();
+    const canInvite =
+        store.state.server?.authenticationMode !== "external" && canSteer() && !scoped();
 
     return html`<${Sheet} title="People" onClose=${closeSheet}>
         ${

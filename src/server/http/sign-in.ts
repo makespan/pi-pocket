@@ -1,4 +1,5 @@
 /** The pages outside the app: signing in with a link, joining with an invite, and a share that arrived too early. */
+import { appPath, loginNext } from "../../base-path.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { PocketApp } from "../app.ts";
 import { type Auth, quickTunnelHost, setAuthCookie } from "../auth.ts";
@@ -12,13 +13,8 @@ function crossSite(request: IncomingMessage): boolean {
     return site !== undefined && site !== "same-origin" && site !== "none";
 }
 
-/** Where to go after signing in: a path on this server, never `//host` or `/\host`, which browsers read as another site. */
-function localPath(next: string | null): string {
-    return next !== null && /^\/(?![/\\])/.test(next) ? next : "/";
-}
-
-function page(title: string, body: string): string {
-    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"><title>${escapeHtml(title)}</title><link rel="stylesheet" href="/style.css"></head><body class="plain-page"><main class="plain">${body}</main></body></html>`;
+function page(basePath: string, title: string, body: string): string {
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"><title>${escapeHtml(title)}</title><link rel="stylesheet" href="${appPath(basePath, "/style.css")}"></head><body class="plain-page"><main class="plain">${body}</main></body></html>`;
 }
 
 /** `/login`: sign this browser in with a token from a link, after asking when it would switch accounts. */
@@ -38,7 +34,7 @@ export async function login(
         ? new URLSearchParams((await readBody(request, 10_000)).toString("utf8"))
         : url.searchParams;
     const token = form.get("token") ?? "";
-    const next = localPath(form.get("next"));
+    const next = loginNext(form.get("next"), auth.basePath);
     const signingIn = auth.tokenUser(token);
 
     if (signingIn === undefined) {
@@ -46,6 +42,7 @@ export async function login(
             response,
             401,
             page(
+                auth.basePath,
                 "Pi Pocket",
                 `<h1>Link expired</h1><p>That login link is not valid. Use the link Pi Pocket prints when it starts, or ask someone signed in for a new invite.</p>`,
             ),
@@ -61,15 +58,16 @@ export async function login(
             response,
             200,
             page(
+                auth.basePath,
                 "Switch account? · Pi Pocket",
-                `<h1>Switch account?</h1><p>This browser is signed in as ${escapeHtml(current.name)}. The link you opened signs it in as ${escapeHtml(signingIn.name)} instead.</p><form method="post" action="/login"><input type="hidden" name="token" value="${escapeHtml(token)}"><input type="hidden" name="next" value="${escapeHtml(next)}"><button type="submit">Sign in as ${escapeHtml(signingIn.name)}</button></form><p><a href="/">Stay signed in as ${escapeHtml(current.name)}</a></p>`,
+                `<h1>Switch account?</h1><p>This browser is signed in as ${escapeHtml(current.name)}. The link you opened signs it in as ${escapeHtml(signingIn.name)} instead.</p><form method="post" action="${appPath(auth.basePath, "/login")}"><input type="hidden" name="token" value="${escapeHtml(token)}"><input type="hidden" name="next" value="${escapeHtml(next)}"><button type="submit">Sign in as ${escapeHtml(signingIn.name)}</button></form><p><a href="${appPath(auth.basePath, "/")}">Stay signed in as ${escapeHtml(current.name)}</a></p>`,
             ),
             "text/html; charset=utf-8",
             { "referrer-policy": "no-referrer" },
         );
     }
 
-    setAuthCookie(request, response, token);
+    setAuthCookie(request, response, token, auth.basePath);
     response.writeHead(303, { location: next });
     response.end();
 
@@ -96,7 +94,11 @@ export async function join(
             return send(
                 response,
                 410,
-                page("Pi Pocket", "<h1>Invite expired</h1><p>Ask for a new one.</p>"),
+                page(
+                    auth.basePath,
+                    "Pi Pocket",
+                    "<h1>Invite expired</h1><p>Ask for a new one.</p>",
+                ),
                 "text/html; charset=utf-8",
             );
         }
@@ -108,8 +110,8 @@ export async function join(
             app.config.updateUser(redeemed.user.id, { tunnel });
         }
 
-        setAuthCookie(request, response, redeemed.token);
-        response.writeHead(303, { location: "/" });
+        setAuthCookie(request, response, redeemed.token, auth.basePath);
+        response.writeHead(303, { location: appPath(auth.basePath, "/") });
         response.end();
 
         return;
@@ -122,6 +124,7 @@ export async function join(
             response,
             410,
             page(
+                auth.basePath,
                 "Pi Pocket",
                 "<h1>Invite expired</h1><p>Each invite works once, and only until it expires. Ask for a new one.</p>",
             ),
@@ -141,6 +144,7 @@ export async function join(
             response,
             200,
             page(
+                auth.basePath,
                 "Sign in as owner · Pi Pocket",
                 `<h1>Sign in as owner</h1><p>This device will sign in as you, the owner. It gets full control of Pi Pocket and of this machine.</p>${switching}<form method="post"><button type="submit">Sign in as owner</button></form>`,
             ),
@@ -162,6 +166,7 @@ export async function join(
         response,
         200,
         page(
+            auth.basePath,
             "Join Pi Pocket",
             `<h1>Join Pi Pocket</h1><p>This device will be able to ${can}.</p><form method="post"><label>Your name<input name="name" maxlength="40" autofocus required placeholder="e.g. Alex"></label><button type="submit">Join</button></form>`,
         ),
@@ -170,13 +175,14 @@ export async function join(
 }
 
 /** `/share`: a share that reached the server, before the service worker that takes shares was installed here. */
-export function sharePage(response: ServerResponse): void {
+export function sharePage(response: ServerResponse, basePath = ""): void {
     return send(
         response,
         200,
         page(
+            basePath,
             "Share to Pi",
-            `<h1>Open Pi Pocket first</h1><p>Sharing works once Pi Pocket has been opened on this device over https. Open it, then share again.</p><p><a href="/">Open Pi Pocket</a></p>`,
+            `<h1>Open Pi Pocket first</h1><p>Sharing works once Pi Pocket has been opened on this device over https. Open it, then share again.</p><p><a href="${appPath(basePath, "/")}">Open Pi Pocket</a></p>`,
         ),
         "text/html; charset=utf-8",
     );

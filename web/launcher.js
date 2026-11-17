@@ -1,3 +1,4 @@
+import { appUrl } from "./base-path.js";
 // The launcher, after Omarchy's Walker: one box for sessions, actions, and themes. Mod+K opens it anywhere. Arrowing
 // onto a theme shows it at once; Enter keeps it, Escape goes back. Start with > for actions only, @ for sessions, # for
 // themes.
@@ -37,6 +38,7 @@ import {
     sessionOrder,
     setUnread,
     signOut,
+    openId,
     store,
     workspaceOrder,
 } from "./store.js";
@@ -234,6 +236,12 @@ function actionItems() {
             icon: "artifact",
             run: () => openSheet({ type: "artifacts" }),
         },
+        {
+            label: "All artifacts",
+            detail: "every session, with its current version",
+            icon: "artifact",
+            run: () => openSheet({ type: "all-artifacts" }),
+        },
         conversation &&
             filesAvailable() && {
                 label:
@@ -388,7 +396,7 @@ function actionItems() {
             run: () => {
                 const link = document.createElement("a");
 
-                link.href = `/api/c/${conversation.id}/export`;
+                link.href = appUrl(`/api/c/${conversation.id}/export`);
                 link.download = "";
                 link.click();
             },
@@ -425,13 +433,19 @@ function actionItems() {
             label: "Running now",
             detail: "everything Pi is doing",
             icon: "pulse",
-            run: () => openSheet({ type: "running" }),
+            run: () => toggleBoard("running"),
+        },
+        session && {
+            label: "Background",
+            detail: "what commands print as they run",
+            icon: "terminal",
+            run: () => openSheet({ type: "background" }),
         },
         {
-            label: store.state.board ? "Close the subagents board" : "Subagents",
+            label: store.state.board === "subagents" ? "Close the subagents board" : "Subagents",
             detail: "subagents in every session",
             icon: "fork",
-            run: toggleBoard,
+            run: () => toggleBoard("subagents"),
         },
         collab() && {
             label: "Notifications",
@@ -472,7 +486,8 @@ function actionItems() {
         { label: "Spend", icon: "pulse", run: () => openSheet({ type: "spend" }) },
         collab()
             ? {
-                  label: "People and invites",
+                  label:
+                      server?.authenticationMode === "external" ? "People" : "People and invites",
                   icon: "users",
                   run: () => openSheet({ type: "people" }),
               }
@@ -504,7 +519,12 @@ function actionItems() {
                         notify("info", "Restarting. Running work continues after the restart.");
                     }),
             },
-        { label: "Sign out", detail: "this browser", icon: "logout", run: signOut },
+        server?.authenticationMode !== "external" && {
+            label: "Sign out",
+            detail: "this browser",
+            icon: "logout",
+            run: signOut,
+        },
         // What extensions' browser modules added (`extension-ui.js`).
         ...extensionLauncherItems(),
         // Last: a list that is cut keeps the actions above, however many favorites there are (up to 100).
@@ -551,7 +571,7 @@ function sessionItems() {
             detail: shortPath(session.cwd, server?.home),
             status:
                 [
-                    session.id === store.state.conversationId ? "Current" : null,
+                    session.id === openId() ? "Current" : null,
                     session.waiting ? "Waiting" : session.busy ? "Working" : null,
                     session.archived ? "Archived" : null,
                 ]

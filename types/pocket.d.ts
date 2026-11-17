@@ -13,7 +13,7 @@
  * release. A member without it is stable. The reference is in `docs/extensions/reference/`. `test/public-types.ts`
  * fails when this file and Pi Pocket's code do not agree.
  */
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ProviderConfig, Skill } from "@earendil-works/pi-coding-agent";
 import type {
@@ -24,6 +24,7 @@ import type {
     TaskId,
     Tx,
 } from "@earendil-works/pi-durable";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import type { ComponentType, Fragment, FunctionComponent, h, VNode } from "preact";
 import type {
     useCallback,
@@ -93,7 +94,33 @@ export interface Module {
     pocketApi?: number;
 }
 
+/**
+ * Pi Pocket's options on a tool definition, beside Pi Durable's own. See the Tools guide.
+ * @since 0.29.0
+ * @experimental
+ */
+export interface ToolOptions {
+    /**
+     * Give this tool to every subagent, even one started with a tool list, while its extension runs there.
+     * @since 0.29.0
+     * @experimental
+     */
+    readonly subagents?: "always";
+}
+
 // ─── The host ────────────────────────────────────────────────────────────────
+
+/**
+ * An execution provider for one workspace URI scheme.
+ * @since 0.28.0
+ * @experimental
+ */
+export interface WorkspaceProvider {
+    /** @experimental @since 0.28.0 */
+    env(cwd: string): ExecutionEnv;
+    /** @experimental @since 0.28.0 */
+    resolveCwd(cwd: string, signal?: AbortSignal): Promise<string>;
+}
 
 /**
  * What the app gives a module: the first argument of its default export. The host stays the same while modules reload.
@@ -168,6 +195,12 @@ export interface Host {
      */
     registerModelProvider(provider: string, config: ProviderConfig): () => void;
     /**
+     * Registers an execution provider for a workspace URI scheme.
+     * @since 0.28.0
+     * @experimental
+     */
+    registerWorkspaceProvider(scheme: string, provider: WorkspaceProvider): () => void;
+    /**
      * Shapes the request every model call sends: `shape` returns a replacement payload, or undefined to keep it. It runs
      * after Pi and the caller shaped the request, closest to the wire. The return value stops the shaping.
      * @since 0.18.0
@@ -181,6 +214,12 @@ export interface Host {
      * @since 0.3.0
      */
     requesterOf(conversationId: ConversationId): string | undefined;
+    /**
+     * The conversation's current working folder or workspace URI.
+     * @since 0.28.0
+     * @experimental
+     */
+    cwdOf(conversationId: ConversationId): string;
     /**
      * The role of a person by id: `"owner"`, `"guest"`, or `"viewer"`. It is `undefined` for an id that is not a person here.
      * @since 0.27.0
@@ -237,11 +276,25 @@ export interface Host {
      */
     onLimitsChanged(listener: () => void): () => void;
     /**
+     * Delivers data from outside (a chat message, a feed's item) to an existing session, or to PiP, as a message from a
+     * person: fenced, with their instructions first, once for each key, within a limit. Webhooks use the same path.
+     * Undefined on an older server.
+     * @since 0.29.0
+     * @experimental
+     */
+    readonly inbox?: InboxApi;
+    /**
      * Sessions that a session starts and sends messages to, as Agent Teams does.
      * @since 0.14.0
      * @experimental
      */
     readonly linkedSessions: LinkedSessions;
+    /**
+     * Starts an ordinary top-level session, the same kind New session makes, for the person Pi works for in the source.
+     * @since 0.28.0
+     * @experimental
+     */
+    readonly sessions: Sessions;
     /**
      * Makes text from other places safe for Pi to read.
      * @since 0.14.0
@@ -331,11 +384,28 @@ export interface AppEvents {
      */
     "run.started": { conversationId: number; session: number };
     /**
-     * Pi stopped working in a conversation.
+     * Pi stopped working in a conversation. `outcome` says how: `done` when the run finished, `failed` when it gave up,
+     * or `aborted` when it was stopped. `failure` is why, the same short line the session list shows, and only when
+     * `outcome` is `failed`.
      * @since 0.22.0
      * @experimental
      */
-    "run.ended": { conversationId: number; session: number };
+    "run.ended": {
+        conversationId: number;
+        session: number;
+        /**
+         * How the run stopped: it finished, it gave up, or it was stopped.
+         * @since 0.28.0
+         * @experimental
+         */
+        outcome: "done" | "failed" | "aborted";
+        /**
+         * Why it gave up, only when `outcome` is `failed`.
+         * @since 0.28.0
+         * @experimental
+         */
+        failure?: string;
+    };
 }
 
 /**
@@ -825,6 +895,47 @@ export interface PublicFetchInit {
     timeoutMs?: number;
 }
 
+/** What `host.inbox.deliver` delivers. */
+export interface InboxDelivery {
+    /** The id of the person Pi works for on it: they must be able to steer in the session. */
+    by: string;
+    /** One short line: the message shows as `[via <via>]`. */
+    via: string;
+    /** What came, as text: core makes it safe between tags and cuts it to 8,000 characters. */
+    payload: string;
+    /** Delivers once: a delivery again with the same key, also after a restart, sends nothing. */
+    key: string;
+    /** The person's own instructions, first and outside the fence. Default: say what it is, and whether to act. */
+    instructions?: string;
+    /** The fence's tag: a lowercase word with `-`, such as `chat-message`. Default `outside-data`. */
+    tag?: string;
+    /** Attributes of the fence's opening tag, up to 8 (not `from` or `from-id`), each made one line without quotes. */
+    attributes?: Readonly<Record<string, string>>;
+    /**
+     * Who sent it: the fence's `from` and `from-id`, inside it. Outside it, only `trusted`: the id is one the owner marked
+     * (guidance to the model, not a boundary).
+     */
+    sender?: { name: string; id?: string; trusted?: boolean };
+    /** A cap of messages an hour for one source (`bucket`), counted in memory across every caller; at most 600. */
+    limit?: { bucket: string; perHour: number };
+}
+
+/**
+ * Outside data delivered to sessions. An error's `status` says why it did not go: 400 a delivery that cannot be right,
+ * 410 the session is gone or its person cannot see it, 503 PiP is off, 429 the bucket's limit, 409 the session does not
+ * take messages now (try again later).
+ * @since 0.29.0
+ * @experimental
+ */
+export interface InboxApi {
+    /**
+     * Delivers to `target`. `sent: false`: its key delivered it before.
+     * @since 0.29.0
+     * @experimental
+     */
+    deliver(target: ConversationId, delivery: InboxDelivery): Promise<{ sent: boolean }>;
+}
+
 /**
  * Sessions that a session starts and sends messages to. Each call acts as the person that Pi works for in `source`,
  * with that person's checks. A call again with the same `key` acts once, and returns what the first call returned.
@@ -836,7 +947,9 @@ export interface LinkedSessions {
      * Starts a session linked to `source`, in `cwd` or the source's folder, and sends it `message` as its first
      * message. `model` is `provider/modelId`; `thinking` is any level (since 0.25.0; before, no higher than the source's). `cwd` is since 0.19.0:
      * an older Pi Pocket ignores it, and starts the session in the source's folder. A blank `cwd` counts as none; a
-     * relative one resolves against the server process's folder, not the source's.
+     * relative one resolves against the server process's folder, not the source's. `answers` (since 0.29.0) says
+     * whether its final answer comes back to the source by itself: false when the source turned its answers off with
+     * `reports`. An older Pi Pocket does not return it.
      * @since 0.14.0
      * @experimental
      */
@@ -850,9 +963,12 @@ export interface LinkedSessions {
             cwd?: string;
         },
         key: string,
-    ): Promise<{ session: ConversationId; address: string }>;
+    ): Promise<{ session: ConversationId; address: string; answers?: boolean }>;
     /**
-     * Sends `message` to the linked session at the address `to`: as a follow-up, or with `steer` at its next pause.
+     * Sends `message` to the linked session at the address `to`: at its next pause (since 0.28.0; before, only with
+     * `steer: true`), or with `steer: false` after its run. `answers` (since 0.28.0) says whether its final answer comes
+     * back to the source by itself, which it does when the source started it; otherwise the message asks it to reply
+     * when an answer is needed. An older Pi Pocket does not return it.
      * @since 0.14.0
      * @experimental
      */
@@ -860,13 +976,73 @@ export interface LinkedSessions {
         source: ConversationId,
         request: { to: string; message: string; steer?: boolean },
         key: string,
-    ): Promise<void>;
+    ): Promise<{ answers?: boolean }>;
+    /**
+     * Stops the run of the linked session at the address `to`, and withdraws what waits in its queue. When it is idle,
+     * it has no run to stop, and the call only withdraws the queue. `busy` says whether it was working.
+     * @since 0.28.0
+     * @experimental
+     */
+    stop(source: ConversationId, request: { to: string }, key: string): Promise<{ busy: boolean }>;
+    /**
+     * Archives the linked session at the address `to`, or brings it back when `archived` is false. `archived` says
+     * whether it is archived now. `repeating` is how many of its repeating schedules keep running.
+     * @since 0.28.0
+     * @experimental
+     */
+    archive(
+        source: ConversationId,
+        request: { to: string; archived?: boolean },
+        key: string,
+    ): Promise<{ archived: boolean; repeating: number }>;
+    /**
+     * Sets whether `source`, as a lead, takes the final answers of the sessions it started when their runs end.
+     * `take: false` turns them off for every one: old, new, archived. Then `send` from `source` returns
+     * `answers: false`, and its message asks the target to send the answer. `take: true` turns them back on, the
+     * default. `take` says the state now. It needs the same access as `archive`, on `source` itself. A repeat with
+     * the same `key` changes nothing again. A `take` that is not a boolean throws a `TypeError`. An older Pi Pocket
+     * has no `reports`: check for it.
+     * @since 0.29.0
+     * @experimental
+     */
+    reports(
+        source: ConversationId,
+        request: { take: boolean },
+        key: string,
+    ): Promise<{ take: boolean }>;
     /**
      * The sessions linked to `source`, at any distance, that the person Pi works for there can see.
      * @since 0.14.0
      * @experimental
      */
     list(source: ConversationId): Promise<LinkedSession[]>;
+}
+
+/**
+ * Ordinary sessions an extension starts. Each call acts as the person Pi works for in `source`, with that person's
+ * checks. A call again with the same `key` returns the session the first call made, and sends its message once.
+ * @since 0.28.0
+ * @experimental
+ */
+export interface Sessions {
+    /**
+     * Starts an ordinary session, like New session, in `cwd` or the server's default folder. `model` is
+     * `provider/modelId`. `thinking` is any level, lowered to one the model has. With `message`, that text is
+     * the session's first message, sent once for this `key`, as the person wrote it.
+     * @since 0.28.0
+     * @experimental
+     */
+    start(
+        source: ConversationId,
+        request: {
+            title?: string;
+            cwd?: string;
+            model?: string;
+            thinking?: string;
+            message?: string;
+        },
+        key: string,
+    ): Promise<{ session: ConversationId }>;
 }
 
 /**
@@ -905,13 +1081,20 @@ export interface LinkedSession {
      * @experimental
      */
     archived?: boolean;
+    /**
+     * Why its last run failed, the same short line the session list shows, only while that failure stands and with the
+     * same condition as `title`. A later run clears it.
+     * @since 0.28.0
+     * @experimental
+     */
+    failed?: string;
 }
 
 /**
  * A human-facing linked session that the authenticated person can see.
  * @since 0.16.0
  */
-export interface HumanLinkedSession extends LinkedSession {
+export interface HumanLinkedSession extends Omit<LinkedSession, "failed"> {
     /**
      * Its id, for pocket.openConversation. Other metadata keeps LinkedSession's audience rules.
      * @since 0.16.0
@@ -967,6 +1150,12 @@ export type WebMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
  * @since 0.14.0
  */
 export interface WebRequest {
+    /**
+     * Creates a session from an owner-only route.
+     * @since 0.28.0
+     * @experimental
+     */
+    createSession(request: { cwd: string; title?: string }): Promise<{ id: number }>;
     /**
      * The request's method.
      * @since 0.14.0
@@ -1059,6 +1248,41 @@ export interface WebSession {
 }
 
 /**
+ * Committed usage counters, not estimates of the next request.
+ * @since 0.28.0
+ * @experimental
+ */
+export interface UsageTotals {
+    /** Stored assistant responses; excludes requests with no response entry. */
+    readonly requests: number;
+    /** Uncached input tokens reported by providers. */
+    readonly input: number;
+    /** Input tokens read from a prompt cache. */
+    readonly cacheRead: number;
+    /** Input tokens written to a prompt cache. */
+    readonly cacheWrite: number;
+    /** Output tokens, including reasoning when the provider includes it. */
+    readonly output: number;
+    /** Reported reasoning tokens; absent when none were reported. Do not add to output. */
+    readonly reasoning?: number;
+    /** Estimated cost in US dollars, as core records it. */
+    readonly cost: number;
+    /** Input + cacheRead + cacheWrite of the newest stored assistant response. */
+    readonly lastPrompt: number;
+}
+
+/**
+ * Own usage and sums for visible conversations started from the source, at any depth.
+ * @since 0.28.0
+ * @experimental
+ */
+export interface ConversationUsage {
+    readonly own: UsageTotals;
+    /** Excludes the source. lastPrompt sums each child's lastPrompt; count includes unused children. */
+    readonly children: UsageTotals & { readonly count: number };
+}
+
+/**
  * A request whose named path parameter resolved to an authorized conversation.
  * @since 0.16.0
  */
@@ -1079,6 +1303,13 @@ export interface ConversationWebRequest extends WebRequest {
      * @since 0.16.0
      */
     readonly linkedSessions: HumanLinkedSessions;
+    /**
+     * Read committed usage for the bound source (or a visible conversation id) and its visible descendants.
+     * Ends with this request. No text, entries, or session ids are returned.
+     * @since 0.28.0
+     * @experimental
+     */
+    conversationUsage(conversationId?: ConversationId): Promise<ConversationUsage>;
 }
 
 /**
@@ -1292,8 +1523,35 @@ export type PublicPageHandler = (
 ) => PublicPageAnswer | Promise<PublicPageAnswer>;
 
 /**
- * What a module adds to the app: the second argument of its default export. Register routes, the browser module, and
- * commands while the module loads. They go when this version of the module goes.
+ * How a module's own input shows in the transcript, while the module is on. Nothing here is stored. The model still
+ * reads the message in full.
+ * @since 0.28.0
+ * @experimental
+ */
+export interface PresentEntry {
+    /**
+     * The stored kind, `x.<module>.<name>`.
+     * @since 0.28.0
+     * @experimental
+     */
+    kind: string;
+    /**
+     * The one line the transcript shows.
+     * @since 0.28.0
+     * @experimental
+     */
+    label: string;
+    /**
+     * Matches the start of a user message only when nobody wrote that message.
+     * @since 0.28.0
+     * @experimental
+     */
+    userPrefix?: string;
+}
+
+/**
+ * What a module adds to the app: the second argument of its default export. Register routes, the browser module,
+ * commands, and presentations while the module loads. They go when this version of the module goes.
  * @since 0.14.0
  */
 export interface Web {
@@ -1338,6 +1596,14 @@ export interface Web {
      * @since 0.14.0
      */
     command(name: string, command: Command): void;
+    /**
+     * Says how an input this module sends shows in the transcript, while the module is on. The model still reads
+     * the message in full. `kind` is `x.<module>.<name>`. An optional `userPrefix` matches only a user message
+     * nobody wrote.
+     * @since 0.28.0
+     * @experimental
+     */
+    presentEntry(spec: PresentEntry): void;
     /**
      * Sends an event to the browser module: to everyone it loads for, or to the person `to`. It never throws.
      * @since 0.14.0
@@ -2312,6 +2578,32 @@ export interface CallSummary {
 }
 
 /**
+ * A code fence renderer for one or more languages.
+ * @since 0.28.0
+ * @experimental
+ */
+export interface FenceSpec {
+    /** The registration's id in the module. */
+    id: string;
+    /** Code fence languages that this component draws. Matching ignores case. */
+    langs: string[];
+    /** What the app renders for matching code fences. */
+    component: ComponentType<FenceProps>;
+}
+
+/**
+ * Sets an inline or display math renderer.
+ * @since 0.28.0
+ * @experimental
+ */
+export interface MathInlineSpec {
+    /** The registration's id in the module. */
+    id: string;
+    /** Mounts math into a code element, with its source and whether it is display math. */
+    mount(element: HTMLElement, source: string, display: boolean): void;
+}
+
+/**
  * How the calls of one of the module's tools show in transcripts and peek tiles. Each function gets a copy of the
  * call's arguments.
  * @since 0.14.0
@@ -2350,7 +2642,7 @@ export interface ToolCallSpec<A = Record<string, unknown>> {
 }
 
 /**
- * What `rail`, `menu`, `launcher`, `page`, and `sheet` return.
+ * What `rail`, `menu`, `launcher`, `page`, `sheet`, `fence`, and `mathInline` return.
  * @since 0.14.0
  */
 export interface Added<S> {
@@ -2410,6 +2702,20 @@ export interface MarkdownProps {
      * @since 0.14.0
      */
     text: string;
+}
+
+/**
+ * The props of a `pocket.fence` component.
+ * @since 0.28.0
+ * @experimental
+ */
+export interface FenceProps {
+    /** The code text from the fence. */
+    source: string;
+    /** The language label from the fence. */
+    lang: string;
+    /** Whether the Markdown is still streaming. */
+    streaming: boolean;
 }
 
 /**
@@ -2576,10 +2882,13 @@ export interface Pocket {
      */
     conversationId(): number | null;
     /**
-     * Opens a conversation through normal navigation. The server still checks access.
+     * Opens a conversation through normal navigation. The server still checks access. With `options.artifact`, it then
+     * opens the app's viewer on that artifact of the conversation (at `options.version`, a positive integer, or the
+     * latest). It does not say whether the artifact exists: a missing one fails as in the Artifacts sheet. A bad
+     * `artifact` or `version` is ignored.
      * @since 0.16.0
      */
-    openConversation(id: number | string): void;
+    openConversation(id: number | string, options?: { artifact?: string; version?: number }): void;
     /**
      * Hears which session the tab shows: the listener gets its id, or null, now and on each change. Returns how to stop.
      * @since 0.20.0
@@ -2598,6 +2907,22 @@ export interface Pocket {
      * @experimental
      */
     reveal(id: string): Promise<boolean>;
+    /**
+     * How this browser shows one of this module's inputs (`web.presentEntry` on the server). `kind` is
+     * `x.<module>.<name>`. `open` shows the message, `folded` one line, and `hidden` keeps the turn without
+     * the text until Find. The same mode again changes nothing. The choice stays in this browser, and a person
+     * can change it on any of those rows.
+     * @since 0.28.0
+     * @experimental
+     */
+    entryPresentation(kind: string, mode: "open" | "folded" | "hidden"): void;
+    /**
+     * This browser's choice for one of this module's inputs, or undefined when there is none yet (the rows are
+     * folded then). Set a mode only when there is none, so a person's choice stays theirs.
+     * @since 0.28.0
+     * @experimental
+     */
+    entryPresentation(kind: string): "open" | "folded" | "hidden" | undefined;
     /**
      * Calls one of the module's routes: a GET without `body`, a POST with it.
      * @since 0.14.0
@@ -2718,6 +3043,18 @@ export interface Pocket {
      * @experimental
      */
     composerKey(spec: ComposerKeySpec): Added<ComposerKeySpec>;
+    /**
+     * Draws matching code fences with a Preact component.
+     * @since 0.28.0
+     * @experimental
+     */
+    fence(spec: FenceSpec): Added<FenceSpec>;
+    /**
+     * Sets the inline and display math renderer.
+     * @since 0.28.0
+     * @experimental
+     */
+    mathInline(spec: MathInlineSpec): Added<MathInlineSpec>;
     /**
      * Puts text into the message box, after what is there, for the person to send. It never sends.
      * @since 0.19.0

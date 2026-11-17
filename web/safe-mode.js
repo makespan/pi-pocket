@@ -1,3 +1,4 @@
+import { sessionStore as sessionStorage } from "./base-path.js";
 // Safe mode: a tab opened with `?noext=1` loads no extensions' browser modules (`extension-ui.js`) and no theme
 // (`theme.js`), so one that breaks the app can be turned off from it. It holds for as long as the tab stays open.
 import { replaceAddress } from "./back.js";

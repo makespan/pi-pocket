@@ -1,4 +1,4 @@
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { awaitWithContext } from "@earendil-works/chord/context";
 import type { ProviderConfig, Skill } from "@earendil-works/pi-coding-agent";
 import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
@@ -27,6 +27,7 @@ import type { FetchPublic } from "./public-fetch.ts";
 import type { BrowserControl } from "./browser/page.ts";
 import type { CommandEnvProvider, HiddenValue } from "./hidden.ts";
 import type { AppEventName, AppEvents } from "./app-events.ts";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import type { SettingField, SettingValue } from "./extension-settings.ts";
 
 export type { SettingField, SettingValue } from "./extension-settings.ts";
@@ -45,6 +46,28 @@ export interface LinkedSession {
     cwd?: string;
     busy?: boolean;
     archived?: boolean;
+    /**
+     * Why its last run failed, the same short line the session list shows, only while that failure stands and only when
+     * everyone who sees the asking session sees this one too. A later run clears it.
+     */
+    failed?: string;
+}
+
+/** A linked session at work, as a stall watch sees it (`LinkedSessionsApi.activity`). */
+export interface LinkedActivity {
+    address: string;
+    /** Changes while it makes any progress: a new message, a call, output, its answer as it streams. */
+    progress: string;
+    /** When its newest message came. */
+    at?: number;
+    /** What it waits on, in words: "its bash call", "its model". */
+    waiting: string;
+    /** The call it waits on, when one runs. */
+    callId?: string;
+    /** The `timeout` that call gave itself, in ms: it runs until then. */
+    timeoutMs?: number;
+    /** It waits for a person to allow a call, or for a provider's limit: no stall, and its quiet time starts after. */
+    paused?: true;
 }
 
 /**
@@ -66,15 +89,113 @@ export interface LinkedSessionsApi {
             cwd?: string;
         },
         key: string,
-    ): Promise<{ session: ConversationId; address: string }>;
-    /** Send `message` to the linked session at address `to`: a follow-up, or with `steer` at its next pause. */
+    ): Promise<{ session: ConversationId; address: string; answers?: boolean }>;
+    /**
+     * Send `message` to the linked session at address `to`: at its next pause, or with `steer: false` after its run.
+     * `answers` says whether its final answer comes back to the source by itself (the source started it, and did not
+     * turn its answers off with `reports`); otherwise the message asks it to reply when an answer is needed.
+     */
     send(
         source: ConversationId,
         request: { to: string; message: string; steer?: boolean },
         key: string,
-    ): Promise<void>;
+    ): Promise<{ answers?: boolean }>;
+    /**
+     * Stop the run of the linked session at address `to`, and withdraw what waits in its queue. Idle is a no-op.
+     * Returns whether it was working.
+     */
+    stop(source: ConversationId, request: { to: string }, key: string): Promise<{ busy: boolean }>;
+    /**
+     * Archive the linked session at address `to`, or bring it back when `archived` is false. Returns whether it is
+     * archived now, and how many of its repeating schedules keep running.
+     */
+    archive(
+        source: ConversationId,
+        request: { to: string; archived?: boolean },
+        key: string,
+    ): Promise<{ archived: boolean; repeating: number }>;
+    /**
+     * Set whether `source`, as a lead, takes the run-end answers of the sessions it started (`take`, the default true).
+     * Returns the state now.
+     */
+    reports(
+        source: ConversationId,
+        request: { take: boolean },
+        key: string,
+    ): Promise<{ take: boolean }>;
     /** The sessions linked to `source`, at any distance, that the person Pi works for there sees. */
     list(source: ConversationId): Promise<LinkedSession[]>;
+    /** The sessions `source` started and takes the answers of, while they are at work: for a stall watch. */
+    activity?(source: ConversationId): Promise<LinkedActivity[]>;
+    /** Stop one stuck call of a session `source` leads; its run goes on. False when no such call runs. */
+    stopCall?(source: ConversationId, request: { to: string; callId: string }): Promise<boolean>;
+    /** Call `start` with the lead each time a session it leads starts a run, whoever woke it: for a stall watch. */
+    onLedRun?(
+        start: (
+            lead: ConversationId,
+            api: { commit: <T>(change: (tx: Tx) => Promise<T>, context: Context) => Promise<T> },
+            context: Context,
+        ) => Promise<unknown>,
+    ): () => void;
+}
+
+/**
+ * Ordinary sessions that an extension starts (`extension-sessions.ts`). Each call acts as the person Pi works for in
+ * `source`, with their checks. A call again with the same `key` returns the session the first made, and sends its
+ * message once.
+ */
+export interface SessionsApi {
+    /**
+     * Start an ordinary session for the person Pi works for in `source`, like New session.
+     *
+     * @experimental In 0.28.
+     */
+    start(
+        source: ConversationId,
+        request: {
+            title?: string;
+            cwd?: string;
+            model?: string;
+            thinking?: string;
+            message?: string;
+        },
+        key: string,
+    ): Promise<{ session: ConversationId }>;
+}
+
+/** What `host.inbox.deliver` delivers. */
+export interface InboxDelivery {
+    /** The id of the person Pi works for on it: they must be able to steer in the session. */
+    by: string;
+    /** One short line: the message shows as `[via <via>]`. */
+    via: string;
+    /** What came, as text: core makes it safe between tags and cuts it to 8,000 characters. */
+    payload: string;
+    /** Delivers once: a delivery again with the same key, also after a restart, sends nothing. */
+    key: string;
+    /** The person's own instructions, first and outside the fence. Default: say what it is, and whether to act. */
+    instructions?: string;
+    /** The fence's tag: a lowercase word with `-`, such as `chat-message`. Default `outside-data`. */
+    tag?: string;
+    /** Attributes of the fence's opening tag, up to 8 (not `from` or `from-id`), each made one line without quotes. */
+    attributes?: Readonly<Record<string, string>>;
+    /**
+     * Who sent it: the fence's `from` and `from-id`, inside it. Outside it, only `trusted`: the id is one the owner marked
+     * (guidance to the model, not a boundary).
+     */
+    sender?: { name: string; id?: string; trusted?: boolean };
+    /** A cap of messages an hour for one source (`bucket`), counted in memory across every caller; at most 600. */
+    limit?: { bucket: string; perHour: number };
+}
+
+/**
+ * Outside data delivered to sessions (`inbox.ts`). Throws an error whose `status` says why it did not go: 400 a delivery
+ * that cannot be right, 410 the session is gone or its person cannot see it, 503 PiP is off, 429 the bucket's limit,
+ * 409 the session does not take messages now (try again later).
+ */
+export interface InboxApi {
+    /** Deliver to `target`. `sent: false`: its key delivered it before. */
+    deliver(target: ConversationId, delivery: InboxDelivery): Promise<{ sent: boolean }>;
 }
 
 /** Human-facing linked sessions, bound to the signed-in person and source of one route request. */
@@ -340,6 +461,12 @@ export type CommandInfo = Omit<ExtensionCommand, "handler"> & { id: string; name
  */
 export type ModelRequestShaper = (payload: unknown, model: Model<Api>) => unknown | undefined;
 
+/** An execution environment provider for a workspace URI scheme. */
+export interface WorkspaceProvider {
+    env(cwd: string): ExecutionEnv;
+    resolveCwd(cwd: string, signal?: AbortSignal): Promise<string>;
+}
+
 /** What the app gives its extensions. Extensions are reloaded on edit; the host is not. */
 export interface PocketHost {
     readonly guard: LancetGuard;
@@ -384,6 +511,8 @@ export interface PocketHost {
      * that is not the last one changes nothing.
      */
     registerModelProvider(provider: string, config: ProviderConfig): () => void;
+    /** @experimental @since 0.28.0 */
+    registerWorkspaceProvider(scheme: string, provider: WorkspaceProvider): () => void;
     /**
      * Shape the request every model call sends: `shape` returns a replacement payload, or undefined to keep it. It runs
      * after Pi and the caller shaped the request, closest to the wire. Returns how to stop shaping. Only the modules
@@ -450,6 +579,15 @@ export interface PocketHost {
         conversationId?: ConversationId,
     ): void;
     /**
+     * Stop one running tool call of a conversation, by its call id: its result says it was aborted, with what it
+     * printed, and the run goes on. False when no such call runs.
+     */
+    stopToolCall(conversationId: ConversationId, callId: string): Promise<boolean>;
+    /** Whether a run of the conversation waits for a provider's limit to clear (`limit-gate.ts`): no stall. */
+    waitsForLimit(conversationId: ConversationId): boolean;
+    /** Tell the owner that work in a session passed a hard limit: a notice in their tabs, and a push notification. */
+    alertOwner(conversationId: ConversationId, title: string, body: string): void;
+    /**
      * Why work Pi would start in a conversation with nobody asking (a subagent's report, say) may not start now: the
      * spend limit its session or whoever pays there reached. Undefined when it may.
      */
@@ -457,12 +595,29 @@ export interface PocketHost {
     /** Call `listener` whenever the owner changes a spend limit; returns how to stop. */
     onLimitsChanged(listener: () => void): () => void;
     /**
+     * Data from outside (a chat message, a feed's item, a service's event) delivered to an existing session, or to PiP,
+     * as a message from a person, the path webhooks use (`inbox.ts`). Undefined on a server started before 0.29.0.
+     *
+     * @experimental In 0.29: it can change in a minor release (docs/extensions/policies/api-stability.md).
+     */
+    readonly inbox?: InboxApi;
+    /**
      * Sessions that a session starts and messages (`linked-sessions.ts`): each one is an ordinary session, linked to the
      * one that started it. The checks of the person Pi works for apply, and a call repeated with its key acts once.
      *
      * @experimental In 0.14: it can change in a minor release (docs/extensions/policies/api-stability.md).
      */
     readonly linkedSessions: LinkedSessionsApi;
+    /**
+     * Ordinary sessions an extension starts (`extension-sessions.ts`): a top-level session, like New session, for the
+     * person Pi works for in the source. A call repeated with its key returns the first session and sends its message
+     * once.
+     *
+     * @experimental In 0.28: it can change in a minor release (docs/extensions/policies/api-stability.md).
+     */
+    readonly sessions: SessionsApi;
+    /** The conversation's current working folder or workspace URI. @experimental @since 0.28.0 */
+    cwdOf(conversationId: ConversationId): string;
     /** Messages to Pi for later: the schedule tool sets up Pi's own. */
     readonly schedules: Pick<Schedules, "add" | "cancel" | "limits" | "list" | "task">;
     /** Commands Pi runs in the background: the background tool starts, reads, and stops them. */
@@ -539,6 +694,8 @@ export interface PocketHost {
         Updates,
         "status" | "check" | "apply" | "subscribe" | "setBeta" | "beta"
     >;
+    /** The names of the tools that the modules that are on install now, built-in and drop-in. */
+    toolNames(): string[];
 }
 
 /**
@@ -551,6 +708,8 @@ export type WebMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 /** A request to a module's route, as its handler gets it. */
 export interface WebRequest {
+    /** @experimental @since 0.28.0 */
+    createSession(request: { cwd: string; title?: string }): Promise<{ id: number }>;
     readonly method: WebMethod;
     /** The path's `:name` parts, by name. */
     readonly params: Readonly<Record<string, string>>;
@@ -579,6 +738,24 @@ export interface WebSession {
     readonly updatedAt: number;
 }
 
+/** Committed usage counters. Experimental, since 0.28.0. */
+export interface UsageTotals {
+    requests: number;
+    input: number;
+    cacheRead: number;
+    cacheWrite: number;
+    output: number;
+    reasoning?: number;
+    cost: number;
+    lastPrompt: number;
+}
+
+/** A source's own usage and the sum for its visible descendants. Experimental, since 0.28.0. */
+export interface ConversationUsage {
+    readonly own: Readonly<UsageTotals>;
+    readonly children: Readonly<UsageTotals> & { readonly count: number };
+}
+
 /** A route request whose named path parameter resolved to a visible conversation. */
 export interface ConversationWebRequest extends WebRequest {
     readonly conversation: {
@@ -589,6 +766,8 @@ export interface ConversationWebRequest extends WebRequest {
         readonly thinkingLevel: ModelThinkingLevel;
     };
     readonly linkedSessions: HumanLinkedSessions;
+    /** Read the source's usage and visible descendants. Experimental, since 0.28.0. */
+    conversationUsage(conversationId?: ConversationId): Promise<ConversationUsage>;
 }
 
 /**
@@ -663,10 +842,23 @@ export type PublicPageHandler = (
 ) => PublicPageAnswer | Promise<PublicPageAnswer>;
 
 /**
+ * How a module's own input shows in the transcript, while the module is on. Nothing here is stored. The model still
+ * reads the message in full.
+ */
+export interface PresentEntry {
+    /** `x.<module>.<name>`, the stored kind this presentation is for. */
+    kind: string;
+    /** The one line the transcript shows. */
+    label: string;
+    /** Matches the start of a user message only when nobody wrote that message. */
+    userPrefix?: string;
+}
+
+/**
  * A module's own part of the app, the second argument of its default export: routes under `/api/x/<module>/`, a browser
- * module that adds to the app's screens, events from here to that browser module, and commands for the message box.
- * Routes, the browser module, and commands are registered while the module loads; they go with it when it reloads or
- * is turned off.
+ * module that adds to the app's screens, events from here to that browser module, commands for the message box, and
+ * how its own inputs show. Routes, the browser module, commands, and presentations are registered while the module
+ * loads; they go with it when it reloads or is turned off.
  */
 export interface ExtensionWeb {
     /** The version of this API (`POCKET_API` in `extension-web.ts`). */
@@ -709,6 +901,11 @@ export interface ExtensionWeb {
      * module, as routes do. `scope: "conversation"` is for whoever may drive the session; `"global"` is the owner's.
      */
     command(name: string, command: ExtensionCommand): void;
+    /**
+     * How an input this module sends shows in the transcript, while the module is on. `kind` is `x.<module>.<name>`.
+     * An optional `userPrefix` matches only a user message nobody wrote.
+     */
+    presentEntry(spec: PresentEntry): void;
     /**
      * Draw the module's public pages: what anyone with one of its links (`web.links`) sees, with no sign-in, at
      * `/l/<token>`. GET shows the page; a form on it posts back to the same address. One handler for each module.

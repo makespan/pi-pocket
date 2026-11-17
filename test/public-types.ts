@@ -11,6 +11,8 @@ import type {
     ExtensionModule,
     ExtensionWeb,
     LinkedSession as RealLinkedSession,
+    LinkedSessionsApi as RealLinkedSessions,
+    SessionsApi as RealSessions,
     PocketHost,
     AppEvents as RealAppEvents,
     SettingField as RealSettingField,
@@ -28,7 +30,9 @@ import type {
     PublicPageRequest as RealPublicPageRequest,
     WebRequest as RealWebRequest,
 } from "../src/server/host.ts";
+import type { ToolOptions as RealToolOptions } from "../src/server/extensions/subagents.ts";
 import type {
+    ToolOptions,
     Command,
     CommandContext,
     CommandResult,
@@ -37,6 +41,8 @@ import type {
     HumanLinkedSessions,
     Host,
     LinkedSession,
+    LinkedSessions,
+    Sessions,
     Module,
     AppEvents,
     SettingField,
@@ -73,7 +79,11 @@ type Internal =
     | "background"
     | "goals"
     | "browsers"
-    | "memory";
+    | "memory"
+    | "toolNames"
+    | "stopToolCall"
+    | "waitsForLimit"
+    | "alertOwner";
 
 type PublicHost = Pick<PocketHost, keyof Host>;
 
@@ -82,6 +92,9 @@ export const hostBack = (types: Host): PublicHost => types;
 /** A member of the real host that is neither public nor internal. */
 export const hostMembers = (member: Exclude<keyof PocketHost, keyof Host | Internal>): never =>
     member;
+
+export const toolOptions = (real: RealToolOptions): ToolOptions => real;
+export const toolOptionsBack = (types: ToolOptions): RealToolOptions => types;
 
 export const web = (real: ExtensionWeb): Web => real;
 export const webBack = (types: Web): ExtensionWeb => types;
@@ -139,6 +152,10 @@ export const settingField = (real: RealSettingField): SettingField => real;
 export const settingFieldBack = (types: SettingField): RealSettingField => types;
 export const linked = (real: RealLinkedSession): LinkedSession => real;
 export const linkedBack = (types: LinkedSession): RealLinkedSession => types;
+export const links = (real: RealLinkedSessions): LinkedSessions => real;
+export const linksBack = (types: LinkedSessions): RealLinkedSessions => types;
+export const sessions = (real: RealSessions): Sessions => real;
+export const sessionsBack = (types: Sessions): RealSessions => types;
 
 /** A module written against the public types is one the loader takes. */
 export const module = (types: Module): ExtensionModule => types;

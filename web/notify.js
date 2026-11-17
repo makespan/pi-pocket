@@ -1,5 +1,7 @@
+import { appUrl } from "./base-path.js";
 // Phone notifications: this device subscribes to the server's pushes, and each person picks what they hear about.
 import { useEffect, useState } from "preact/hooks";
+import { callHost, hostCan } from "./host.js";
 import { api, attempt, closeSheet, notify, sessionUnread } from "./store.js";
 import { html, Loader, Sheet, Switch } from "./ui.js";
 
@@ -14,7 +16,9 @@ export function registerWorker() {
         return Promise.resolve(null);
     }
 
-    registering ??= navigator.serviceWorker.register("/sw.js").catch(() => null);
+    registering ??= navigator.serviceWorker
+        .register(appUrl("/sw.js"), { scope: appUrl("/") })
+        .catch(() => null);
 
     return registering;
 }
@@ -24,9 +28,14 @@ let badged = null;
 /** What the count was worked out from: it changes only with these, while streaming updates the store many times a second. */
 let countedFrom = null;
 
-/** The home-screen icon counts the sessions that need you: a call waits for approval, or the chat has news. */
+/**
+ * The home-screen icon counts the sessions that need you: a call waits for approval, or the chat has news. An
+ * embedder with a badge of its own (`web/host.js`) shows it on its icon and tray instead.
+ */
 export function updateBadge(state) {
-    if (!("setAppBadge" in navigator) || !state.me) {
+    const embedder = hostCan("badge");
+
+    if ((!embedder && !("setAppBadge" in navigator)) || !state.me) {
         return;
     }
 
@@ -56,6 +65,13 @@ export function updateBadge(state) {
     }
 
     badged = count;
+
+    if (embedder) {
+        callHost("setBadge", count);
+
+        return;
+    }
+
     (count === 0 ? navigator.clearAppBadge() : navigator.setAppBadge(count)).catch(() => {});
 }
 
@@ -109,6 +125,11 @@ const KINDS = [
         "limit",
         "Waiting for a limit",
         "when a run waits more than ten minutes for a provider's limit to clear",
+    ],
+    [
+        "stalled",
+        "Stalled work",
+        "when a subagent or linked session makes no progress past its hard limit",
     ],
     ["mention", "Mentions", "when someone writes @your name in a chat"],
     ["chat", "Chat messages", "in sessions you take part in"],

@@ -10,7 +10,7 @@ Use `defineTool` from `@earendil-works/pi-durable`, and give the tool to your ex
 const wordCount = defineTool({
     name: "my_word_count",
     description: "Count the words in a text.",
-    parameters: Type.Object({ text: Type.String({ description: "The text to count" }) }),
+    parameters: obj({ text: str({ description: "The text to count" }) }),
     replay: "safe",
     execute: async (args) => ({
         output: [{ type: "text" as const, text: `${countWords(args.text)} words` }],
@@ -27,9 +27,27 @@ export default function createMyWords() {
 
 - `name` must be different from the name of each other tool ([Names](reference/names.md)). Use a prefix of your own.
 - `description` and `parameters` go to the model with each request. Keep them short and exact.
-- `deferred: true` keeps a tool out of the requests until Pi loads it with `tool_search`, which only the Tool search module offers: while it is off, Pi cannot load the tool. Use it for a tool that few conversations need, or for a large set of tools. `test/prompt-budget.test.ts` keeps Pi Pocket's own prompt and tools at 16,000 characters in a plain session.
-- `parameters` is a TypeBox schema (`Type` from `@earendil-works/pi-ai`). Pi Durable checks the arguments against it before `execute` runs.
+- `deferred: true` keeps a tool out of the requests until Pi loads it with `tool_search`, which only the Tool search module offers: while it is off, Pi cannot load the tool. Use it for a tool that few conversations need, or for a large set of tools. `test/prompt-budget.test.ts` keeps Pi Pocket's own prompt and tools under 14,000 characters (about 5,000 tokens) in a plain session, a guard against growth by accident: a rule that makes the work better is worth its tokens.
+- `parameters` is a JSON Schema object. Build it with the builders of `@earendil-works/pi-schema`: `obj`, `str`, `num`, `int`, `bool`, `arr`, `union`, and `opt` for a property that can be left out. `obj` makes a closed object (`additionalProperties: false`); `obj(properties, { open: true })` lets other properties through. Pi Durable checks the arguments against the schema before `execute` runs. Since Pi 1.5 (Pi Pocket 0.28.0), pi-schema does the check, and the model gets its messages, such as `- path: missing`. A drop-in written before can keep TypeBox's `Type` from `@earendil-works/pi-ai` ([API versions](reference/api-versions.md)).
 - `execute(args, api, context)` does the work.
+
+## Tools for every subagent
+
+Set `subagents: "always"` on a tool that every subagent needs. When Pi starts a subagent with a `tools` list, Pi Pocket adds the marked tools that the session enables, from the extensions that run there, once each. It never adds an extension: a tool from one removed for subagents, or left out of a session's fixed extension list, does not come along. Without a tool list, nothing changes. The tool's prompt and spawn result do not mention the marker or the tools it adds.
+
+A marked tool with `deferred: true` is offered at once when the subagent has a tool list: a subagent has no tool search. A tool that only scripts call keeps that rule, and brings codemode with it. Sending more work to an existing subagent does not change its tools.
+
+Pi Durable's `defineTool` does not type this Pi Pocket option. Add it after `defineTool`, as with `annotations`:
+
+```typescript
+import type { ToolOptions } from "./_pocket.d.ts";
+
+const lookup = Object.assign(defineTool({ … }), {
+    subagents: "always",
+} satisfies ToolOptions);
+```
+
+Since 0.29.0, experimental: it can change in a minor release. This is an addition, so the API version stays 2. Older Pi Pocket ignores the field; it does not add the tool. A gallery entry that needs this behavior sets `minPocket` ([API versions](reference/api-versions.md)).
 
 ## Return a result
 

@@ -201,7 +201,7 @@ export class Collab {
             });
         }
 
-        const url = `/s/${String(id)}?chat=1`;
+        const url = this.#app.url(`/s/${String(id)}?chat=1`);
 
         for (const userId of mentioned) {
             void app.alerts.push(userId, id, "mention", {

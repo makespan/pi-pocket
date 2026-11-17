@@ -25,7 +25,14 @@ import { exists, textOf, type Written } from "./files.ts";
 import { readThemeFile } from "./themes.ts";
 
 /** The packages a browser module can import by name: the app's import map (`web/index.html`). */
-const BROWSER_PACKAGES = new Set(["preact", "preact/hooks", "htm", "marked", "dompurify"]);
+const BROWSER_PACKAGES = new Set([
+    "preact",
+    "preact/hooks",
+    "htm",
+    "marked",
+    "dompurify",
+    "#pocket/base-path",
+]);
 
 /**
  * What a file imports when it runs: `import … from`, `export … from`, `import "…"`, `import("…")`, and `require("…")`,

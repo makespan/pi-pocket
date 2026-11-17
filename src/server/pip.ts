@@ -17,7 +17,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
     AgentDoc,
@@ -36,6 +36,7 @@ import {
 import type { PocketApp } from "./app.ts";
 import type { User } from "./config.ts";
 import { AuthorsDoc, FollowsDoc, PipAskedDoc, SessionsDoc } from "./docs.ts";
+import { presentationOptions, presentationPip } from "./entry-presentation.ts";
 import { NOTE_ENTRY } from "./entry-format.ts";
 import { describe, HttpError } from "./errors.ts";
 import { clip, defang, quoted } from "./fence.ts";
@@ -71,10 +72,10 @@ export const PIP_EXTENSIONS = [
     "pocket-memory",
 ];
 /**
- * The tools PiP goes without: Pi Durable's coding tools (it reads files, and changes nothing itself), and the artifact
- * card, which its small panel does not draw (`artifact` still opens in the viewer).
+ * The tools PiP goes without: Pi Durable's coding tools (it reads files, and changes nothing itself). Its `artifact`
+ * has no `inline` (`withoutInline`): its small panel does not draw cards, and the viewer still opens the artifact.
  */
-export const PIP_WITHOUT = ["bash", "write", "edit", "artifact_inline"];
+export const PIP_WITHOUT = ["bash", "write", "edit"];
 /** How reports from followed sessions start, so PiP knows what they are. */
 export const REPORT_HEAD = "[report] ";
 /** Sessions PiP may start in an hour, so a confused loop cannot fill the list. */
@@ -626,7 +627,11 @@ export class Pip {
                     continue;
                 }
 
-                const shown = projectEntry(entry);
+                const shown = projectEntry(
+                    entry,
+                    false,
+                    presentationOptions(app.webs.presentations(), own, Number(entry.id)),
+                );
 
                 if (shown?.kind === "user" && own[String(shown.id)] === user.id) {
                     messages.push({ id: shown.id, text: shown.text });
@@ -898,8 +903,16 @@ export class Pip {
             undefined,
             context,
         );
+        const authors = (await app.harness.snapshot(AuthorsDoc, id, context))?.entries;
+        const presentations = app.webs.presentations();
         const projected = page.items
-            .map((entry) => projectEntry(entry))
+            .map((entry) =>
+                projectEntry(
+                    entry,
+                    false,
+                    presentationOptions(presentations, authors, Number(entry.id)),
+                ),
+            )
             .filter((entry): entry is ClientEntry => entry !== undefined)
             .reverse();
         const last = projected.findLast(
@@ -932,7 +945,14 @@ export class Pip {
 
         for (const entry of projected) {
             if (entry.kind === "user") {
-                lines.push(`▸ ${entry.from ?? "Someone"}: ${clip(entry.text, LINE_CHARS)}`);
+                lines.push(
+                    entry.presentation === undefined
+                        ? `▸ ${entry.from ?? "Someone"}: ${clip(entry.text, LINE_CHARS)}`
+                        : clip(
+                              presentationPip(entry.presentation.label, entry.presentation.summary),
+                              LINE_CHARS,
+                          ),
+                );
             } else if (entry.kind === "assistant") {
                 for (const block of entry.blocks) {
                     if (block.type === "text" && block.text.trim() !== "") {
@@ -969,7 +989,9 @@ export class Pip {
             .all()
             .filter((request) => app.rootOf(request.conversationId) === id)
             .map((request) => `- ${request.id}: ${request.tool} ${snippet(request.subject, 200)}`);
-        const schedules = await app.schedules.list(id);
+        const schedules = (await app.schedules.list(id)).filter(
+            (item) => item.paused === undefined,
+        );
         const state = app.approvals
             .all()
             .some((request) => app.rootOf(request.conversationId) === id)
@@ -1126,7 +1148,11 @@ export class Pip {
         folders.add(app.defaultCwd);
 
         for (const folder of [clone, ...[...folders].slice(0, 200)]) {
-            if (existsSync(folder) && sameRepo(await this.#origin(folder), info.repo)) {
+            if (
+                app.workspaceScheme(folder) === undefined &&
+                existsSync(folder) &&
+                sameRepo(await this.#origin(folder), info.repo)
+            ) {
                 return (
                     await git(folder, ["rev-parse", "--show-toplevel"]).catch(() => folder)
                 ).trim();
@@ -1303,8 +1329,12 @@ export class Pip {
         return busy;
     }
 
-    /** Archive a session, or bring it back. */
-    async archive(pipId: ConversationId, sessionId: number, archived: boolean): Promise<void> {
+    /** Archive a session, or bring it back. Gives how many repeating schedules keep running in it. */
+    async archive(
+        pipId: ConversationId,
+        sessionId: number,
+        archived: boolean,
+    ): Promise<{ repeating: number }> {
         const user = this.#person(pipId);
         const id = this.#session(pipId, user, sessionId);
 
@@ -1313,7 +1343,7 @@ export class Pip {
             this.#requireLooked(pipId, sessionId, "archive");
         }
 
-        await this.#app.commands.updateSession(id, this.#through(user), { archived });
+        return this.#app.commands.updateSession(id, this.#through(user), { archived });
     }
 
     /** The calls waiting for approval in the sessions PiP's person can see. */
@@ -1553,6 +1583,14 @@ export class Pip {
     /** A session's last words, for PiP: how its run ended, and Pi's last answer, fenced. */
     async #lastWords(id: ConversationId, title: string, state: string): Promise<string> {
         const name = `${quoted(title, 80)} (/s/${String(id)})`;
+        // A run that failed with no answer of its own (its compaction failed) left the answer before it as the last:
+        // the failure is what came of the run, not that answer.
+        const failure = this.#app.runFailure(id);
+
+        if (failure !== undefined) {
+            return `${name} stopped with an error: ${snippet(failure, 300)}`;
+        }
+
         const page = await (await this.#app.conversation(id)).entries({}, 16, undefined, context);
         const last = page.items
             .map((entry) => projectEntry(entry))
@@ -1659,7 +1697,11 @@ export class Pip {
                 };
 
                 await strand(watch.value);
-                watch.start(strand);
+                watch.start(async (call) => {
+                    if (call.kind === "value") {
+                        await strand(call.value);
+                    }
+                });
             }
 
             settled = await submission.wait(context);

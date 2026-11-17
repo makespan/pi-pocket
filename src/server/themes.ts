@@ -245,8 +245,8 @@ function writeThemeFile(file: string, text: string): void {
 }
 
 /** A theme's file's address: its path in the folder, each part escaped, under the theme's id and version. */
-const themeAddress = (id: string, rev: string, path: string) =>
-    `/themes/${id}/${rev}/${path.split("/").map(encodeURIComponent).join("/")}`;
+const themeAddress = (id: string, rev: string, path: string, basePath = "") =>
+    `${basePath}/themes/${id}/${rev}/${path.split("/").map(encodeURIComponent).join("/")}`;
 
 /** A theme folder found, in the order listed. */
 interface Listed {
@@ -259,6 +259,7 @@ interface Listed {
 export type ThemeFile = { css: string } | (FileStat & { type: string });
 
 export interface ThemesOptions {
+    basePath?: string;
     builtIn: string;
     dataDir: string;
     /** Pi Pocket's version, for a theme's `minPocket`: its package's, unless a test says otherwise. */
@@ -748,17 +749,19 @@ export class Themes {
         return [
             ...[...version.assets]
                 .filter(([, asset]) => asset.type === "font/woff2")
-                .map(([path]) => themeAddress(version.id, version.rev, path)),
+                .map(([path]) =>
+                    themeAddress(version.id, version.rev, path, this.#options.basePath),
+                ),
             ...Object.entries(APP_FONTS)
                 .filter(([family]) => named.has(family))
-                .map(([, file]) => file),
+                .map(([, file]) => `${this.#options.basePath ?? ""}${file}`),
         ];
     }
 
     /** The stylesheet of a theme: its `theme.css`, which imports the rest; none for colors alone. */
     #chain(version: Version): string[] {
         return version.css.has("theme.css")
-            ? [`/themes/${version.id}/${version.rev}/theme.css`]
+            ? [themeAddress(version.id, version.rev, "theme.css", this.#options.basePath)]
             : [];
     }
 
@@ -810,7 +813,13 @@ export class Themes {
             seen.add(id);
 
             try {
-                const version = readTheme(dir, id, builtIn, this.#options.version);
+                const version = readTheme(
+                    dir,
+                    id,
+                    builtIn,
+                    this.#options.version,
+                    this.#options.basePath,
+                );
 
                 this.#good.set(id, version);
                 this.#problems.delete(id);
@@ -981,6 +990,7 @@ export function readTheme(
     id: string,
     builtIn: boolean,
     pocketVersion: string,
+    basePath = "",
 ): Version {
     const files = walk(dir);
     const hash = createHash("sha256");
@@ -1172,7 +1182,10 @@ export function readTheme(
         ...(colors === undefined ? {} : { colors }),
         ...(colorsLight === undefined ? {} : { colorsLight }),
         css: new Map(
-            [...css].map(([path, text]) => [path, served(text, loads.get(path)!, id, rev)]),
+            [...css].map(([path, text]) => [
+                path,
+                served(text, loads.get(path)!, id, rev, basePath),
+            ]),
         ),
         assets,
         rev,
@@ -1193,13 +1206,13 @@ interface Load {
  * stylesheet. A path in a variable (`--wallpaper: url("images/a.png")`) would otherwise be read where the variable is
  * used, from the app's own stylesheet, and miss.
  */
-function served(text: string, loads: Load[], id: string, rev: string): string {
+function served(text: string, loads: Load[], id: string, rev: string, basePath: string): string {
     const parts: string[] = [];
     let at = 0;
 
     // In one pass, front to back: a slice of the whole text for each load would grow with their count times the size.
     for (const load of [...loads].sort((a, b) => a.start - b.start)) {
-        const address = `${themeAddress(id, rev, load.file)}${load.fragment === undefined ? "" : `#${load.fragment}`}`;
+        const address = `${themeAddress(id, rev, load.file, basePath)}${load.fragment === undefined ? "" : `#${load.fragment}`}`;
 
         parts.push(text.slice(at, load.start), load.quoted ? `"${address}"` : `url("${address}")`);
         at = load.end;

@@ -54,6 +54,18 @@ export interface User {
     tunnel?: string;
     /** The most Pi may spend for this person, in dollars; never for the owner. */
     budget?: number;
+    /** When their profile picture was set (`avatars.ts`); absent means they have none. */
+    avatar?: number;
+}
+
+/** Who is signed in, as `hello` says it to a tab, and as the app page carries it (`serveApp`). */
+export function helloUser(user: User) {
+    return {
+        id: user.id,
+        name: user.name,
+        role: user.role,
+        ...(user.sessions === undefined ? {} : { sessions: user.sessions.map(Number) }),
+    };
 }
 
 /** An invite not yet used, kept by its code's sha256 (the code itself is only shown to whoever made it). */
@@ -86,6 +98,8 @@ interface PocketConfig {
     users: User[];
     /** Invites not yet used: kept here so one that lasts a day or a week outlives a restart. */
     invites?: StoredInvite[];
+    /** Permanent external identity bindings. A missing user is a tombstone, never automatic readmission. */
+    externalBindings?: { provider: string; subject: string; userId: string; owner: boolean }[];
     lastModel?: ModelChoice;
     /** The model and thinking level new sessions start with, as the owner chose; absent: the last one picked. */
     defaultModel?: ModelChoice;
@@ -216,6 +230,11 @@ export class ConfigStore {
     /** The owner's values for a module's settings (`web.settings`): a copy, by name. */
     extensionSettings(module: string): Record<string, string | number | boolean> {
         return { ...(this.#config.extensionSettings?.[module] ?? {}) };
+    }
+
+    /** The modules the owner set values for, on or off. */
+    extensionSettingModules(): string[] {
+        return Object.keys(this.#config.extensionSettings ?? {});
     }
 
     /** Keep a module's values, all of them at once; none drops its entry. */
@@ -383,9 +402,61 @@ export class ConfigStore {
         return { user, token };
     }
 
+    /** Bind once, in the same atomic config save as user creation; keep deleted users' bindings as tombstones. */
+    externalUser(
+        provider: string,
+        subject: string,
+        owner: boolean,
+        name?: string,
+    ): User | undefined {
+        const bindings = this.#config.externalBindings ?? [];
+        const binding = bindings.find(
+            (each) => each.provider === provider && each.subject === subject,
+        );
+
+        if (binding !== undefined) {
+            // A changed owner mapping cannot elevate a former guest or let a former owner in as a guest.
+            return binding.owner === owner ? this.userById(binding.userId) : undefined;
+        }
+
+        // One bootstrap owner identity per provider. Replacing it requires explicit offline administration.
+        if (owner && bindings.some((each) => each.provider === provider && each.owner)) {
+            return undefined;
+        }
+
+        const user: User | undefined = owner
+            ? this.#config.users.find((each) => each.role === "owner")
+            : {
+                  id: randomUUID(),
+                  name: name?.replace(/\s+/g, " ").trim().slice(0, 40) || subject.slice(0, 40),
+                  role: "guest",
+                  // No recoverable bearer for external guests, and no token a native login can match.
+                  tokenHash: "",
+                  createdAt: Date.now(),
+              };
+
+        if (user === undefined) {
+            return undefined;
+        }
+
+        if (!owner) {
+            this.#config.users.push(user);
+        }
+
+        this.#config.externalBindings = [
+            ...bindings,
+            { provider, subject, userId: user.id, owner },
+        ];
+        this.save();
+
+        return user;
+    }
+
     updateUser(
         id: string,
-        patch: Partial<Pick<User, "name" | "lastSeen" | "role" | "sessions" | "tunnel" | "budget">>,
+        patch: Partial<
+            Pick<User, "name" | "lastSeen" | "role" | "sessions" | "tunnel" | "budget" | "avatar">
+        >,
     ): void {
         const user = this.userById(id);
 
@@ -414,6 +485,10 @@ export class ConfigStore {
 
         if (user.budget === undefined) {
             delete user.budget;
+        }
+
+        if (user.avatar === undefined) {
+            delete user.avatar;
         }
 
         this.save();

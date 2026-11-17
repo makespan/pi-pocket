@@ -1,4 +1,5 @@
 /** The web app's own files and the modules it imports, its content security policy, and image files it shows. */
+import { appPath } from "../../base-path.ts";
 import { createHash } from "node:crypto";
 import { closeSync, createReadStream, openSync, readFileSync, readSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -12,6 +13,7 @@ import {
     type Encoding,
     MIN_COMPRESS_BYTES,
 } from "./compress.ts";
+import { manifestFor } from "./icon-route.ts";
 import { send } from "./io.ts";
 
 export const WEB = join(APP_ROOT, "web");
@@ -24,7 +26,18 @@ export const VENDOR: Record<string, string> = {
     "htm.mjs": vendor("htm", "dist", "htm.module.js"),
     "marked.mjs": vendor("marked", "lib", "marked.esm.js"),
     "purify.mjs": vendor("dompurify", "dist", "purify.es.mjs"),
+    // Loaded on demand by the diagrams extension (`extensions/diagrams/`), not by the app.
+    "pele.mjs": vendor("pele", "dist", "pele.js"),
+    "katex.mjs": vendor("katex", "dist", "katex.mjs"),
 };
+
+/**
+ * KaTeX's stylesheet, and its fonts: its rules name them as `fonts/KaTeX_*.woff2`, which resolves
+ * to `/vendor/fonts/`.
+ */
+export const KATEX_CSS = vendor("katex", "dist", "katex.min.css");
+export const KATEX_FONT = /^KaTeX_[A-Za-z0-9-]+\.woff2$/;
+export const katexFont = (name: string) => vendor("katex", "dist", "fonts", name);
 
 export const TYPES: Record<string, string> = {
     ".html": "text/html; charset=utf-8",
@@ -39,6 +52,8 @@ export const TYPES: Record<string, string> = {
     ".jpeg": "image/jpeg",
     ".gif": "image/gif",
     ".webp": "image/webp",
+    ".heic": "image/heic",
+    ".heif": "image/heif",
     ".woff2": "font/woff2",
     ".pdf": "application/pdf",
     ".txt": "text/plain; charset=utf-8",
@@ -238,8 +253,18 @@ function preloads(imports: Record<string, string>): string[] {
     return [...found];
 }
 
-/** The app page, with its content security policy, and the modules it loads listed for the browser to fetch at once. */
-export function serveApp(response: ServerResponse): void {
+/**
+ * The app page, with its content security policy, and the modules it loads listed for the browser to fetch at once.
+ * `facts`, when the request is signed in, is who and which build (`{ user, build }`, as `hello` says them): the page
+ * carries them so a tab can check a session the device kept before `/api/me` answers. Absent when signed out or
+ * device caching is off.
+ */
+export function serveApp(
+    response: ServerResponse,
+    basePath = "",
+    icon: string | null = null,
+    facts?: { user: unknown; build: string },
+): void {
     let body: string;
 
     try {
@@ -250,7 +275,34 @@ export function serveApp(response: ServerResponse): void {
         return;
     }
 
-    // The policy is of the page as it is stored: links are not scripts, and add nothing to it.
+    body = body
+        .replaceAll("__POCKET_BASE_JSON__", JSON.stringify(basePath))
+        .replaceAll("__POCKET_BASE__", basePath);
+
+    // The home-screen icon in the colors this browser chose, in the page as it is served (`http/icon-route.ts`).
+    if (icon !== null) {
+        body = body.replace(
+            `<link rel="apple-touch-icon" href="${basePath}/apple-touch-icon.png" />`,
+            () => `<link rel="apple-touch-icon" href="${icon}" />`,
+        );
+    }
+
+    // Who is signed in and which build this is, for the device cache's check (`usable` in store.js) before `/api/me`.
+    // JSON in a script the policy allows by hash: a name or a title cannot close the tag.
+    if (facts !== undefined) {
+        const json = JSON.stringify(facts).replace(/</g, "\\u003c");
+
+        body = body.replace(
+            "</head>",
+            () => `<script type="application/json" id="pocket-known">${json}</script></head>`,
+        );
+        // The static boot screen must not flash before IndexedDB has its chance. `start` reveals the root once it
+        // has either a checked view to paint or no copy (then the normal boot screen, while `/api/me` answers).
+        body = body.replace('<div id="app">', '<div id="app" hidden>');
+    }
+
+    // The policy is of the page as served for this mount: the facts above are a script, allowed by their hash; links
+    // are not scripts, and add nothing to it.
     const policy = appPolicy(body);
 
     try {
@@ -259,8 +311,15 @@ export function serveApp(response: ServerResponse): void {
             string,
             string
         >;
-        const links = preloads(imports)
-            .map((address) => `<link rel="modulepreload" href="${address}" />`)
+        const links = preloads(
+            Object.fromEntries(
+                Object.entries(imports).map(([name, address]) => [
+                    name,
+                    address.slice(basePath.length),
+                ]),
+            ),
+        )
+            .map((address) => `<link rel="modulepreload" href="${basePath}${address}" />`)
             .join("");
 
         body = body.replace("</head>", () => `${links}</head>`);
@@ -271,6 +330,33 @@ export function serveApp(response: ServerResponse): void {
     send(response, 200, body, "text/html; charset=utf-8", {
         "cache-control": "no-cache",
         "content-security-policy": policy,
+    });
+}
+
+/**
+ * The PWA's public identity, scope, share target and icons, generated for this mount, with the icons of the colors this
+ * browser chose when it has chosen (`http/icon-route.ts`).
+ */
+export function serveManifest(
+    request: IncomingMessage,
+    response: ServerResponse,
+    basePath: string,
+    dataDir: string,
+): void {
+    const file = readFileSync(join(WEB, "manifest.webmanifest"), "utf8");
+    const manifest = JSON.parse(manifestFor(request, file, dataDir, basePath) ?? file);
+
+    manifest.id = appPath(basePath, "/");
+    manifest.start_url = appPath(basePath, "/");
+    manifest.scope = appPath(basePath, "/");
+    manifest.share_target.action = appPath(basePath, "/share");
+
+    for (const icon of manifest.icons) {
+        icon.src = appPath(basePath, icon.src);
+    }
+
+    send(response, 200, JSON.stringify(manifest), "application/manifest+json", {
+        "cache-control": "no-cache",
     });
 }
 

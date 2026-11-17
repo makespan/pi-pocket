@@ -4,7 +4,7 @@
  *
  * Kinds are part of the stored data: rename one and old sessions lose it.
  */
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import {
     type CheckpointInfo,
     type ConversationId,
@@ -37,6 +37,11 @@ export type SessionMeta = {
     forkedFrom?: { id: number; entryId?: number };
     /** The session that started this one (`linked-sessions.ts`): a link only, which gives no access and owns nothing. */
     linkedFrom?: { id: number };
+    /**
+     * False: this session, as a lead, takes no run-end answers from the sessions it started (`linked-sessions.ts`,
+     * `reports`), and a message from it asks the target to send its answer. Absent: it takes them.
+     */
+    linkedReports?: false;
     /** The most Pi may spend here, in dollars, subagents included. */
     budget?: number;
     /** The git worktree the session works in, when it has one of its own. */
@@ -57,6 +62,44 @@ export const SessionsDoc = defineDoc<{ items: Record<string, SessionMeta> }>({
     ...rebased,
     scope: "session",
     initial: () => ({ items: {} }),
+});
+
+/** Interrupt handoffs not yet admitted as messages: retries find the same durable task, even after a restart. */
+export const InterruptsDoc = defineDoc<{ pending: Record<string, number> }>({
+    kind: "pocket.interrupts",
+    version: 1,
+    ...rebased,
+    scope: "conversation",
+    history: "latest",
+    fork: "initial",
+    initial: () => ({ pending: {} }),
+});
+
+/** A message that Stop took out of the queue: it waits, and goes to Pi only when someone sends it. */
+export type HeldMessage = {
+    /** The id of the queued message it was. */
+    key: string;
+    /** Pi Durable's `UserInput`, as it was queued. */
+    content: JsonValue;
+    mode: "steer" | "followUp";
+    /** The request id it goes out with: its sender's, so it stays theirs, and a retry never sends it twice. */
+    requestId: string;
+    /** Pi Durable's `InputEntry`, when it had one. */
+    entry?: JsonValue;
+    /** Who wrote it, when a person did. */
+    by?: string;
+    heldAt: number;
+};
+
+/** The messages a Stop kept from the queue, in their order (`Commands.abort`, `Commands.sendHeld`). */
+export const HeldDoc = defineDoc<{ items: HeldMessage[] }>({
+    kind: "pocket.held",
+    version: 1,
+    ...rebased,
+    scope: "conversation",
+    history: "latest",
+    fork: "initial",
+    initial: () => ({ items: [] }),
 });
 
 /** Favorite working folders in shortcut order, private to each person and shared by their devices. */
@@ -84,7 +127,8 @@ export const LinkedSessionPeersDoc = defineDoc<{ peers: Record<string, number> }
 
 /**
  * Messages between the linked sessions of one team since a person last wrote in any of them, kept on the team's top
- * session (`linked-sessions.ts`). Since 0.19.0 no count stops them: before, sessions stopped past 20 until a person wrote.
+ * session. Before 0.19.0 sessions stopped past 20 until a person wrote; since 0.28.0 nothing counts them, and this is
+ * no longer written. Kept so the copies older versions stored keep their definition.
  */
 export const LinkedSessionRelayDoc = defineDoc<{ sent: number }>({
     kind: "pocket.linked-session-relay",
@@ -102,7 +146,22 @@ export const LinkedSessionRelayDoc = defineDoc<{ sent: number }>({
  * 30 days, and the newest 1000, as `shell.ts` keeps its requests. (Not a document family: those cannot be pruned.)
  */
 export const LinkedSessionCallsDoc = defineDoc<{
-    items: Record<string, { conversationId?: number; by?: string; at: number }>;
+    items: Record<
+        string,
+        {
+            conversationId?: number;
+            by?: string;
+            at: number;
+            /**
+             * What a stop, an archive or a reports switch returned, so a repeat gives that and changes nothing again.
+             * `stopping`: the stop has not finished. A reports switch names its own session in `conversationId`.
+             */
+            result?:
+                | { busy: boolean; stopping?: boolean }
+                | { archived: boolean; repeating: number }
+                | { take: boolean };
+        }
+    >;
 }>({
     kind: "pocket.linked-session-calls",
     version: 1,
@@ -289,6 +348,12 @@ export type SubagentRecord = {
      * a later time, so it needs them again.
      */
     dealtAt?: number;
+    /** The stall watch's marks for its current quiet spell (`extensions/subagents.ts`): since when, and what it did. */
+    stall?: { since: number; told?: true; stopped?: true };
+    /** How often the stall watch stopped its work since it last answered: 2 at most, then a person decides. */
+    stops?: number;
+    /** Who stopped its run: a person, its parent (`subagent stop`), or the stall watch. A new message clears it. */
+    stoppedBy?: "person" | "parent" | "deadline";
 };
 
 /** A subagent's report waiting to go to its parent: all those waiting go together, as one message. */
@@ -313,6 +378,8 @@ export const SubagentsDoc = defineDoc<{
     outbox?: PendingReport[];
     /** The task sending them, while there is one. */
     courier?: TaskId;
+    /** The task that looks for subagents at work that make no progress, while any is at work. */
+    stallWatch?: TaskId;
     /**
      * The batch taken from the outbox, kept until it has left the parent's queue, with the request id it goes with: a
      * courier that stops before then leaves it to the next, which sends it again under that id, so it goes once.
@@ -484,10 +551,18 @@ export type Schedule = {
     createdAt: number;
     /** How many times it went out: each time sends with its own request id, so a restart never sends one twice. */
     runs: number;
+    /** How many of a repeat's times sent nothing because its last message still waited in the queue (`schedules.ts`). */
+    skipped?: number;
+    /** When the newest of those was. */
+    skippedAt?: number;
     /** The durable task that sends it. */
     taskId: TaskId;
     /** Set by the same call already, when a tool call is replayed: its `taskId:callId`. */
     key?: string;
+    /** How many times it was edited: what an editor's save checks, so a save from an older copy is refused. */
+    revision?: number;
+    /** Paused by a person: it sends nothing until someone resumes it. When, and by whom. */
+    paused?: { at: number; by: string };
 };
 
 /** Messages that go to Pi later, or on repeat. A fork starts without them: they belong to who set them up. */
@@ -518,14 +593,27 @@ export type BackgroundTask = {
     code?: number;
     /** `split`'s exit code, when writing its log failed (a full disk): its output may stop short. */
     logFailed?: number;
-    /** Why Pi Pocket stopped it, when it did of itself (its output came too fast to keep). */
+    /** Why Pi Pocket stopped it, when it did of itself (its output came too fast to keep, or nothing for too long). */
     why?: string;
+    /** "person": a person stopped it, and Pi is told, as Pi may wait for it. */
+    by?: "person";
+    /** How long it may print nothing before Pi Pocket stops it; 0 or absent (a task from before 0.29): no limit. */
+    quietMs?: number;
     /** Processes it started that left its group and still ran when it ended (a daemon): a stop ends them. */
     left?: number[];
     /** The machine's boot it started in: a task of another boot has no process left. */
     boot?: string;
     endedAt?: number;
-    /** Whether Pi gets a message when it ends. */
+    /** When Pi was told that it ended, if it was: a task told once is not told again. */
+    toldAt?: number;
+    /**
+     * Pi is still to be told that it ended. Set when it ends, so a task that ended before 0.28 (told then, with no
+     * `toldAt`) is not told again.
+     */
+    untold?: true;
+    /** The request id of the message that tells it, saved before that message is sent, until it is told. */
+    batch?: string;
+    /** Whether Pi gets a message when it ends: false for one Pi stopped itself, which needs no message. */
     notify: boolean;
     /** Whom Pi worked for when it started the command: its message goes out as their work. */
     requestedBy?: string;
@@ -596,9 +684,12 @@ export type Lesson = {
     /** Short and stable: what Pi and people use to change or remove it. */
     id: string;
     text: string;
-    /** The project it is for (`memory.ts`: the repository's shared git folder, or the folder); absent: everywhere. */
+    /**
+     * The project it is for (`memory.ts`: the repository's shared git folder, or the folder); absent: everywhere.
+     * `pocket-session:<root id>` (`sessionKey`): that session's own lessons, a key no folder has.
+     */
     project?: string;
-    /** The project's folder name, for people to read. */
+    /** The project's folder name, or the session's title, for people to read. */
     projectName?: string;
     /** The session it came from: a subagent's lesson is its session's. */
     from?: { conversationId: number; title: string };
@@ -619,8 +710,8 @@ export type Lesson = {
 };
 
 /**
- * Memory: short lessons Pi keeps across sessions, by id, for one project or everywhere. Pi gets those that apply in
- * its system prompt (`extensions/memory.ts`).
+ * Memory: short lessons Pi keeps across sessions, by id, for one project, everywhere, or one session. Pi gets those
+ * that apply in its system prompt (`extensions/memory.ts`).
  */
 export const MemoryDoc = defineDoc<{ items: Record<string, Lesson> }>({
     kind: "pocket.memory",
@@ -674,6 +765,20 @@ export const ShellRequestsDoc = defineDoc<{ items: Record<string, number> }>({
     history: "latest",
     fork: "initial",
     initial: () => ({ items: {} }),
+});
+
+/**
+ * Why a session's last run failed, in the same short line the session list shows. A later run clears it when that run
+ * starts, so a process that starts again still knows a run that gave up. A stop is not a failure and writes nothing.
+ */
+export const RunFailureDoc = defineDoc<{ text?: string }>({
+    kind: "pocket.run-failure",
+    version: 1,
+    ...rebased,
+    scope: "conversation",
+    history: "latest",
+    fork: "initial",
+    initial: () => ({}),
 });
 
 /**

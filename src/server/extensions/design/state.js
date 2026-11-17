@@ -1,3 +1,4 @@
+import { localStore as localStorage, sessionStore as sessionStorage } from "#pocket/base-path";
 // The workspace's state: one small store for the whole tab, made when the module loads. It lives outside the panel's
 // component, so going back to the chat on a phone (which closes the panel) and coming again keeps the canvas as it was.
 

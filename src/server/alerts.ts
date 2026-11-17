@@ -1,6 +1,8 @@
 /**
  * Push notifications: who hears about what, and when. Pi finished, Pi needs approval, mentions, and chat messages go
  * to the people who take part in a session, unless they are looking at it or turned that kind off.
+ * Each goes through Web Push to their subscribed devices, and over the live connection to their
+ * embedders (`notifyEmbedders`).
  */
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { ConversationId } from "@earendil-works/pi-durable";
@@ -9,7 +11,7 @@ import { AuthorsDoc, ChatDoc } from "./docs.ts";
 import { describe } from "./errors.ts";
 import { entryText, projectEntry, snippet } from "./projection.ts";
 import { span, type WaitView } from "./limit-gate.ts";
-import type { PushMessage, PushPrefs } from "./push.ts";
+import { DEFAULT_PREFS, type EmbedderMessage, type PushMessage, type PushPrefs } from "./push.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -33,27 +35,45 @@ export class Alerts {
         this.#app = app;
     }
 
-    /** Push to one person about a conversation, unless they cannot see it, turned that kind off, or are looking at it. */
+    /**
+     * Push to one person about a conversation, unless they cannot see it, turned that kind off, or
+     * are looking at it. `call` is an approval's whole call, for embedders, which show it as
+     * their settings say.
+     */
     async push(
         userId: string,
         id: ConversationId,
         kind: keyof PushPrefs,
         message: PushMessage,
         urgency: "normal" | "high" = "normal",
+        call?: { text: string; may: boolean },
     ): Promise<void> {
         const app = this.#app;
         const store = app.pushStore;
         const user = app.config.userById(userId);
 
-        if (store === undefined || user === undefined || !app.canSee(user, id)) {
+        if (user === undefined || !app.canSee(user, id)) {
             return;
         }
 
-        if (
-            !store.prefs(userId)[kind] ||
-            app.watching(userId, id) ||
-            store.subscriptions(userId).length === 0
-        ) {
+        if (!(store?.prefs(userId) ?? DEFAULT_PREFS)[kind] || app.watching(userId, id)) {
+            return;
+        }
+
+        const { approval, ...rest } = message;
+        const embedded: EmbedderMessage = { ...rest, urgency };
+
+        if (approval !== undefined) {
+            embedded.approval = {
+                ...approval,
+                may: call?.may ?? approval.allow,
+                call: call?.text ?? message.body,
+            };
+        }
+
+        app.notifyEmbedders(userId, embedded);
+
+        if (store === undefined || store.subscriptions(userId).length === 0) {
             return;
         }
 
@@ -66,18 +86,21 @@ export class Alerts {
         });
     }
 
-    /** A run started or ended. "Pi finished" goes out once it has stayed finished for a moment. */
-    runChanged(id: ConversationId, busy: boolean): void {
+    /**
+     * A run started or ended. "Pi finished" goes out once it has stayed finished for a moment. `failure`: the run failed
+     * with this line (`app.ts` `failureText`), also when no answer of Pi's says so, as when its compaction failed.
+     */
+    runChanged(id: ConversationId, busy: boolean, failure?: string): void {
         clearTimeout(this.#doneTimers.get(id));
         this.#doneTimers.delete(id);
 
-        if (busy || this.#app.sessionMeta(id) === undefined || this.#app.pushStore === undefined) {
+        if (busy || this.#app.sessionMeta(id) === undefined || this.#quiet()) {
             return;
         }
 
         const timer = setTimeout(() => {
             this.#doneTimers.delete(id);
-            void this.#pushDone(id).catch((error: unknown) =>
+            void this.#pushDone(id, failure).catch((error: unknown) =>
                 this.#app.log(`push failed: ${describe(error)}`),
             );
         }, DONE_DELAY_MS);
@@ -86,7 +109,7 @@ export class Alerts {
         this.#doneTimers.set(id, timer);
     }
 
-    async #pushDone(id: ConversationId): Promise<void> {
+    async #pushDone(id: ConversationId, failure?: string): Promise<void> {
         const app = this.#app;
 
         if (app.isBusy(id)) {
@@ -104,12 +127,18 @@ export class Alerts {
             .map((entry) => projectEntry(entry))
             .find((entry) => entry?.kind === "assistant");
 
-        if (last?.kind !== "assistant" || last.stopReason === "aborted") {
+        // A run that failed before any answer (its compaction failed, its model is gone) leaves the last answer as it
+        // was: the failure says what happened, not that answer.
+        if (
+            failure === undefined &&
+            (last?.kind !== "assistant" || last.stopReason === "aborted")
+        ) {
             return;
         }
 
         const title = await app.conversationTitle(id);
-        const failed = last.stopReason === "error";
+        const failed = failure !== undefined || last?.stopReason === "error";
+        const answer = last?.kind === "assistant" ? last : undefined;
         // PiP's answers open its panel, over whatever the app shows, rather than a session.
         const pip = app.sessionMeta(id)?.pip !== undefined;
         const message: PushMessage = {
@@ -119,10 +148,13 @@ export class Alerts {
                   ? `Pi stopped with an error · ${title}`
                   : `Pi finished · ${title}`,
             body: snippet(
-                failed ? (last.error ?? "The model request failed.") : entryText(last) || "Done.",
+                failure ??
+                    (failed
+                        ? (answer?.error ?? "The model request failed.")
+                        : (answer === undefined ? "" : entryText(answer)) || "Done."),
                 400,
             ),
-            url: pip ? "/?pip=1" : `/s/${String(id)}`,
+            url: pip ? app.url("/?pip=1") : app.url(`/s/${String(id)}`),
             tag: `done-${String(id)}`,
         };
 
@@ -132,7 +164,8 @@ export class Alerts {
                 continue;
             }
 
-            void this.push(userId, id, "done", message);
+            // A failure waits for a person: it goes out at once, also to a phone that saves its battery.
+            void this.push(userId, id, "done", message, failed ? "high" : "normal");
         }
     }
 
@@ -145,7 +178,7 @@ export class Alerts {
         const id = conversationId as unknown as ConversationId;
         const root = app.rootOf(id);
 
-        if (app.pushStore === undefined || app.sessionMeta(root) === undefined) {
+        if (this.#quiet() || app.sessionMeta(root) === undefined) {
             return;
         }
 
@@ -158,7 +191,10 @@ export class Alerts {
                     `${view.reason}. Pi tries again in ${span(view.until - Date.now())} and goes on by itself. Open the session to try now or stop.`,
                     400,
                 ),
-                url: app.sessionMeta(root)?.pip === undefined ? `/s/${String(root)}` : "/?pip=1",
+                url:
+                    app.sessionMeta(root)?.pip === undefined
+                        ? app.url(`/s/${String(root)}`)
+                        : app.url("/?pip=1"),
                 tag: `limit-${String(root)}`,
             };
 
@@ -172,6 +208,30 @@ export class Alerts {
         })().catch((error: unknown) => app.log(`push failed: ${describe(error)}`));
     }
 
+    /** Work passed a hard limit: a notice in the owner's tabs, and one push to the owner, who decides what follows. */
+    ownerAlert(conversationId: ConversationId, title: string, body: string): void {
+        const app = this.#app;
+        const root = app.rootOf(conversationId);
+        const ownerId = app.config.users.find((user) => user.role === "owner")?.id;
+
+        app.ownerNotice("warning", `${title}: ${body}`);
+
+        if (ownerId === undefined || this.#quiet() || app.sessionMeta(root) === undefined) {
+            return;
+        }
+
+        void (async () => {
+            const message: PushMessage = {
+                title: `${title} · ${await app.conversationTitle(root)}`,
+                body: snippet(body, 400),
+                url: app.url(`/s/${String(root)}`),
+                tag: `stalled-${String(root)}`,
+            };
+
+            await this.push(ownerId, root, "stalled", message);
+        })().catch((error: unknown) => app.log(`push failed: ${describe(error)}`));
+    }
+
     /** New approvals go out to everyone in the session who can answer them. */
     announceApprovals(): void {
         const app = this.#app;
@@ -180,7 +240,7 @@ export class Alerts {
 
         this.#approvalIds = new Set(pending.map((approval) => approval.id));
 
-        if (app.pushStore === undefined) {
+        if (this.#quiet()) {
             return;
         }
 
@@ -219,7 +279,7 @@ export class Alerts {
                                             : `${approval.form.title}: ${approval.reason}`,
                                         400,
                                     ),
-                                    url: `/s/${String(approval.conversationId)}`,
+                                    url: app.url(`/s/${String(approval.conversationId)}`),
                                     tag: `approval-${approval.id}`,
                                 },
                                 "high",
@@ -229,21 +289,29 @@ export class Alerts {
                         continue;
                     }
 
+                    const may = app.cannotAllow(user, approval) === undefined;
                     const message: PushMessage = {
                         title: `Pi needs approval · ${title}`,
                         body: snippet(call, 400),
-                        url: `/s/${String(approval.conversationId)}`,
+                        url: app.url(`/s/${String(approval.conversationId)}`),
                         tag: `approval-${approval.id}`,
-                        approval: {
-                            id: approval.id,
-                            allow: shown && app.cannotAllow(user, approval) === undefined,
-                        },
+                        approval: { id: approval.id, allow: shown && may },
                     };
 
-                    void this.push(userId, approval.conversationId, "approval", message, "high");
+                    void this.push(userId, approval.conversationId, "approval", message, "high", {
+                        text: call,
+                        may,
+                    });
                 }
             })().catch((error: unknown) => app.log(`push failed: ${describe(error)}`));
         }
+    }
+
+    /**
+     * Nobody can get a notification: push is off on this server, and no embedder is connected.
+     */
+    #quiet(): boolean {
+        return this.#app.pushStore === undefined && !this.#app.hasEmbedders();
     }
 
     /** People who take part in a session: whoever started it, wrote to Pi, or chatted there. */

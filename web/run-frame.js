@@ -1,3 +1,4 @@
+import { appUrl } from "./base-path.js";
 // HTML from a reply, run: in the server's sandboxed frame page (`/a/frame`), only once someone taps Run. The frame has
 // an opaque origin, as artifacts do: it can run scripts and reach the network, never the app or its cookies.
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
@@ -96,7 +97,7 @@ export function RunFrame({
         class="run-frame"
         ref=${ref}
         key=${source}
-        src="/a/frame"
+        src=${appUrl("/a/frame")}
         sandbox=${SANDBOX}
         allow="fullscreen; clipboard-write"
         referrerpolicy="no-referrer"
