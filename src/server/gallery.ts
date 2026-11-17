@@ -179,6 +179,27 @@ function addressProblem(address: string): string | undefined {
     return "Give the index as a GitHub repository (owner/name), or the https address of its index.json";
 }
 
+/**
+ * The index an administrator pinned with `PI_POCKET_GALLERY_INDEX`, or undefined when it is empty or unset. The owner
+ * cannot change a pinned index in the app. A value the gallery cannot use throws, so the server does not start: it
+ * never reads another index than the administrator chose.
+ */
+function pinnedIndex(value = process.env.PI_POCKET_GALLERY_INDEX): string | undefined {
+    const index = value?.trim() ?? "";
+
+    if (index === "") {
+        return undefined;
+    }
+
+    const problem = addressProblem(index);
+
+    if (problem !== undefined) {
+        throw new Error(`PI_POCKET_GALLERY_INDEX cannot be used: ${problem}.`);
+    }
+
+    return index;
+}
+
 /** Where an index address's index.json is: a repository's, as its default branch has it, or the address itself. */
 const indexUrl = (address: string) =>
     isRepo(address) ? `https://raw.githubusercontent.com/${address}/HEAD/index.json` : address;
@@ -209,6 +230,8 @@ export class Gallery {
     /** Where the owner's GitHub token comes from, for a private index and repositories (`useGithubToken`). */
     #githubToken: () => Promise<string | undefined> = async () => undefined;
     readonly #app: PocketApp;
+    /** The index an administrator pinned (`pinnedIndex`): read once, at the start. */
+    readonly #pinned = pinnedIndex();
     #settings: { index: string } | undefined;
     #read: Read | undefined;
     /** The last read of the index that failed, since the last that did not: the read before counts until it is old. */
@@ -249,6 +272,10 @@ export class Gallery {
     // ─── The setting ───────────────────────────────────────────────────────────────
 
     async #setting(): Promise<{ index: string }> {
+        if (this.#pinned !== undefined) {
+            return { index: this.#pinned };
+        }
+
         if (this.#settings === undefined) {
             let index = DEFAULT_INDEX;
 
@@ -285,12 +312,24 @@ export class Gallery {
         };
     }
 
-    async settings(): Promise<{ index: string; default: string }> {
-        return { index: (await this.#setting()).index, default: DEFAULT_INDEX };
+    /** The index read, the default, and whether an administrator pinned it (`locked`), so the owner cannot change it. */
+    async settings(): Promise<{ index: string; default: string; locked: boolean }> {
+        return {
+            index: (await this.#setting()).index,
+            default: DEFAULT_INDEX,
+            locked: this.#pinned !== undefined,
+        };
     }
 
-    /** Read extensions from another index, or the default one again (empty). */
-    async setIndex(address: unknown): Promise<{ index: string; default: string }> {
+    /** Read extensions from another index, or the default one again (empty), unless an administrator pinned it. */
+    async setIndex(address: unknown): Promise<{ index: string; default: string; locked: boolean }> {
+        if (this.#pinned !== undefined) {
+            throw new HttpError(
+                403,
+                "The administrator set the gallery's index (PI_POCKET_GALLERY_INDEX).",
+            );
+        }
+
         if (typeof address !== "string") {
             throw new HttpError(400, "index must be text");
         }
@@ -623,6 +662,7 @@ export class Gallery {
 
         return {
             address,
+            locked: this.#pinned !== undefined,
             repoUrl: repoUrlOf(address, read?.index),
             fetchedAt: read?.fetchedAt ?? null,
             ...(error === undefined ? {} : { error }),

@@ -562,8 +562,8 @@ const Section = ({ title, count, children }) =>
         ${children}
     </section>`;
 
-/** Where the index is read from, and changing it (empty is the default). */
-function IndexAddress({ address, onChanged }) {
+/** Where the index is read from, and changing it (empty is the default), unless an administrator pinned it. */
+function IndexAddress({ address, locked, onChanged }) {
     const [editing, setEditing] = useState(false);
     const [value, setValue] = useState(address);
     const [fallback, setFallback] = useState(null);
@@ -595,6 +595,16 @@ function IndexAddress({ address, onChanged }) {
             setBusy(false);
         }
     };
+
+    if (locked) {
+        return html`<div class="setting wrap">
+            <div class="grow small">
+                <div class="muted">Index</div>
+                <div class="mono gallery-address">${address}</div>
+                <div class="muted">Set by the administrator. You cannot change it here.</div>
+            </div>
+        </div>`;
+    }
 
     if (!editing) {
         return html`<div class="setting wrap">
@@ -946,7 +956,11 @@ export function GallerySheet({
                     data &&
                     html`<details class="gallery-technical ext-where">
                         <summary>Where these come from</summary>
-                        <${IndexAddress} address=${data.address} onChanged=${() => load(true)} />
+                        <${IndexAddress}
+                            address=${data.address}
+                            locked=${data.locked === true}
+                            onChanged=${() => load(true)}
+                        />
                         <p class="muted small">
                             ${data.fetchedAt ? `Read ${timeAgo(data.fetchedAt)}` : "Not read yet"}
                         </p>
