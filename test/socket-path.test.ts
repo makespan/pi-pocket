@@ -355,6 +355,20 @@ test("socket options: absolute paths only, never mixed with a TCP address, and T
     assert.notEqual(await server(["--socket", socket, "--port", "9999"]), 0);
     assert.notEqual(await server(["--socket", socket, "--host", "127.0.0.1"]), 0);
 
+    // An empty --socket (an unset shell variable) is an error, never a fall back to a TCP port.
+    const probe = createNetServer();
+
+    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+    const port = String((probe.address() as { port: number }).port);
+
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+    const empty = start("empty", ["--socket", ""], { PI_POCKET_PORT: port });
+    const limit = setTimeout(() => empty.proc.kill("SIGKILL"), 15_000);
+
+    assert.deepEqual(await empty.exited, [1, null], empty.output());
+    clearTimeout(limit);
+    assert.match(empty.output(), /--socket needs a path/);
+
     const launcherOptions = (args: string[], env: Record<string, string> = {}) =>
         spawnSync(
             process.execPath,
@@ -368,6 +382,10 @@ test("socket options: absolute paths only, never mixed with a TCP address, and T
 
     assert.equal(launcherOptions([]).stdout.trim(), '{"socket":null,"port":8787}');
     assert.equal(
+        launcherOptions([], { PI_POCKET_SOCKET: "" }).stdout.trim(),
+        '{"socket":null,"port":8787}',
+    );
+    assert.equal(
         launcherOptions([], { PI_POCKET_SOCKET: socket }).stdout.trim(),
         JSON.stringify({ socket, port: 8787 }),
     );
@@ -377,6 +395,7 @@ test("socket options: absolute paths only, never mixed with a TCP address, and T
     );
 
     for (const args of [
+        ["--socket", ""],
         ["--socket", "relative.sock"],
         ["--socket", `${root}/../x.sock`],
         ["--socket", socket, "--port", "9999"],

@@ -17,7 +17,10 @@ export interface OwnSocket {
     ino: number;
 }
 
-/** Validate `--socket` / `PI_POCKET_SOCKET`. Empty means unset, as for the other environment options. */
+/**
+ * Validate `--socket` / `PI_POCKET_SOCKET`. Empty means unset, as for the other environment options; an empty `--socket`
+ * argument never gets here (`socketArgument`), so it cannot fall back to a TCP port.
+ */
 export function parseSocketPath(value: string | undefined): string | undefined {
     if (value === undefined || value === "") {
         return undefined;
@@ -31,6 +34,15 @@ export function parseSocketPath(value: string | undefined): string | undefined {
         throw new SocketPathError(
             "--socket must be an absolute, normalized file path (no . or .. segments)",
         );
+    }
+
+    return value;
+}
+
+/** The value of a `--socket` argument: an empty one (an unset shell variable) is refused, never taken as unset. */
+export function socketArgument(value: string): string {
+    if (value === "") {
+        throw new SocketPathError("--socket needs a path; it is empty");
     }
 
     return value;

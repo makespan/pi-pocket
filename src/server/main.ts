@@ -15,6 +15,7 @@ import {
     parseSocketPath,
     prepareSocketPath,
     releaseSocket,
+    socketArgument,
     SocketPathError,
 } from "../socket-path.ts";
 import { chmodSync, mkdirSync } from "node:fs";
@@ -72,7 +73,7 @@ function parseArgs(argv: string[]) {
             options.port = Number(value());
             tcpFlag = true;
         } else if (arg === "--socket") {
-            options.socket = value();
+            options.socket = socketArgument(value());
         } else if (arg === "--base-path") {
             options.basePath = value();
         } else if (arg === "--cwd") {
