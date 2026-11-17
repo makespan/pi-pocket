@@ -181,14 +181,12 @@ export class ExternalAuth {
             subject.length > 0 &&
             !bootstrapOwner &&
             grantsRole(principal!, this.#policy.ownerCapability, "owner");
+        const guest =
+            subject.length > 0 &&
+            (this.#policy.guests.includes(subject) ||
+                grantsRole(principal!, this.#policy.guestCapability, "guest"));
 
-        if (
-            subject.length === 0 ||
-            (!bootstrapOwner &&
-                !additionalOwner &&
-                !this.#policy.guests.includes(subject) &&
-                !grantsRole(principal!, this.#policy.guestCapability, "guest"))
-        ) {
+        if (subject.length === 0 || (!bootstrapOwner && !additionalOwner && !guest)) {
             throw new HttpError(403, "External identity not admitted");
         }
 
@@ -219,6 +217,7 @@ export class ExternalAuth {
             bootstrapOwner || additionalOwner,
             principal!.name,
             additionalOwner,
+            guest,
         );
 
         if (user === undefined) {

@@ -1,5 +1,15 @@
-import { cleanUp, newSession, openApp, owner, root, scriptedModel, type App } from "./helpers.ts";
+import {
+    cleanUp,
+    newSession,
+    openApp,
+    owner,
+    root,
+    scriptedModel,
+    until,
+    type App,
+} from "./helpers.ts";
 import assert from "node:assert/strict";
+import { createECDH, randomBytes } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, request, type Server } from "node:http";
 import { join } from "node:path";
@@ -735,6 +745,12 @@ test("an owner capability admits owners of their own next to the owner subject; 
 
     assert.equal(dave.user.role, "guest");
     assert.equal((await fetch(base + "/api/me", as("dave@example.com", ownerGrant))).status, 403);
+    // With a guest grant too, they come in with their bound role.
+    const both = { [guestCapability]: [{ role: "owner" }, { role: "guest" }] };
+    const daveBoth = await (await fetch(base + "/api/me", as("dave@example.com", both))).json();
+
+    assert.equal(daveBoth.user.id, dave.user.id);
+    assert.equal(daveBoth.user.role, "guest");
     // An additional owner has the owner's powers, such as managing a guest's access.
     app.setAccess(app.config.userById(alice.user.id)!, dave.user.id, { role: "viewer" });
     assert.equal(app.config.userById(dave.user.id)?.role, "viewer");
@@ -742,8 +758,8 @@ test("an owner capability admits owners of their own next to the owner subject; 
     assert.equal((await fetch(base + "/api/me", as("alice@example.com"))).status, 403);
     assert.equal((await fetch(base + "/api/me", as("alice@example.com", guestGrant))).status, 403);
     assert.equal(app.config.userById(alice.user.id)?.role, "owner");
-    // Owners cannot remove or demote each other in the app.
-    assert.throws(() => app!.removeUser(owner(app!), alice.user.id), /cannot be removed/);
+    // The bootstrap owner cannot be removed, and owners cannot demote each other.
+    assert.throws(() => app!.removeUser(owner(app!), owner(app!).id), /cannot be removed/);
     assert.throws(
         () => app!.setAccess(owner(app!), alice.user.id, { role: "viewer" }),
         /can do everything/,
@@ -771,5 +787,100 @@ test("an owner capability admits owners of their own next to the owner subject; 
         }),
     );
     assert.equal((await fetch(base + "/api/me", as("eve@example.com", ownerGrant))).status, 403);
+    await stopServer();
+});
+
+test("the bootstrap owner alone removes a capability owner: a tombstone that ends their pushes, streams and deliveries", async () => {
+    const removalPolicy = {
+        owner: policy.owner,
+        origin: policy.origin,
+        ownerCapability: guestCapability,
+        guestCapability,
+    };
+    const as = (subject: string, capabilities?: unknown) => ({
+        ...headers(subject),
+        ...(capabilities === undefined
+            ? {}
+            : { "test-capabilities": JSON.stringify(capabilities) }),
+    });
+    const ownerGrant = { [guestCapability]: [{ role: "owner" }] };
+    const remove = (by: Record<string, string>, id: string) =>
+        fetch(base + `/api/users/${id}/remove`, {
+            method: "POST",
+            headers: { ...by, origin: policy.origin, "x-pocket": "1" },
+        });
+    const removable = async (by: Record<string, string>) =>
+        (await (await fetch(base + "/api/users", { headers: by })).json())
+            .filter((each: { removable?: boolean }) => each.removable)
+            .map((each: { id: string }) => each.id);
+
+    await app!.close();
+    app = await openApp(scriptedModel(), join(root, "external-owner-removal"));
+    const base = await serve(new ExternalAuth(capabilityProvider, removalPolicy));
+    const first = as(policy.owner);
+    const alice = as("alice@example.com", ownerGrant);
+    const bob = as("bob@example.com", ownerGrant);
+    const aliceId = (await (await fetch(base + "/api/me", { headers: alice })).json()).user.id;
+    const bobId = (await (await fetch(base + "/api/me", { headers: bob })).json()).user.id;
+    const id = await newSession(app);
+
+    // Every owner gets the stalled-work push, not only the first.
+    const pushed: unknown[] = [];
+    const alerts = app.alerts as unknown as { push: (...args: unknown[]) => Promise<void> };
+    const push = alerts.push;
+
+    alerts.push = async (...args) => void pushed.push(args[0]);
+
+    try {
+        app.alerts.ownerAlert(id, "Stalled", "no progress");
+        await until(async () => pushed.length === 3, "a stalled push to each owner");
+    } finally {
+        alerts.push = push;
+    }
+
+    assert.deepEqual(new Set(pushed), new Set([owner(app).id, aliceId, bobId]));
+    // Only the bootstrap owner sees, and can use, the removal of another owner; nobody removes it.
+    assert.deepEqual((await removable(first)).sort(), [aliceId, bobId].sort());
+    assert.deepEqual(await removable(alice), []);
+    assert.equal((await remove(alice, bobId)).status, 403);
+    assert.equal((await remove(alice, owner(app).id)).status, 400);
+    assert.equal((await remove(first, owner(app).id)).status, 400);
+
+    // Removal is the guest removal: open streams close, Web Push ends, deliveries stop.
+    const ecdh = createECDH("prime256v1");
+
+    ecdh.generateKeys();
+    app.pushStore!.subscribe(aliceId, {
+        endpoint: "https://fcm.googleapis.com/fcm/send/alice",
+        keys: {
+            p256dh: ecdh.getPublicKey().toString("base64url"),
+            auth: randomBytes(16).toString("base64url"),
+        },
+    });
+    const stream = await fetch(base + "/api/events?tab=alice", {
+        headers: alice,
+        signal: AbortSignal.timeout(5000),
+    });
+
+    assert.equal(stream.status, 200);
+    assert.equal((await remove(first, aliceId)).status, 200);
+    assert.match(await stream.text(), /closing/);
+    assert.equal(app.config.userById(aliceId), undefined);
+    assert.deepEqual(app.pushStore!.subscriptions(aliceId), []);
+    await assert.rejects(
+        app.inbox.deliver(id, { by: aliceId, via: "test", payload: "hi", key: "k" }),
+        /its person cannot reach it/,
+    );
+    // A permanent tombstone: neither capability brings them back; the other owner stays.
+    assert.equal((await fetch(base + "/api/me", { headers: alice })).status, 403);
+    assert.equal(
+        (
+            await fetch(base + "/api/me", {
+                headers: as("alice@example.com", { [guestCapability]: [{ role: "guest" }] }),
+            })
+        ).status,
+        403,
+    );
+    assert.equal(app.config.userById(bobId)?.role, "owner");
     await stopServer();
 });

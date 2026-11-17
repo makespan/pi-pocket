@@ -415,6 +415,7 @@ export class ConfigStore {
      * Bind once, in the same atomic config save as user creation; keep deleted users' bindings as tombstones.
      * `additionalOwner`: an owner admitted by the policy's owner capability rather than as its `owner` subject. It
      * becomes a native owner of its own, next to the bootstrap owner, and never takes the bootstrap owner's place.
+     * `guest`: the subject is also admitted as a guest on this request (listed, or by the guest capability).
      */
     externalUser(
         provider: string,
@@ -422,6 +423,7 @@ export class ConfigStore {
         owner: boolean,
         name?: string,
         additionalOwner = false,
+        guest = false,
     ): User | undefined {
         const bindings = this.#config.externalBindings ?? [];
         const binding = bindings.find(
@@ -429,8 +431,12 @@ export class ConfigStore {
         );
 
         if (binding !== undefined) {
-            // A changed owner mapping cannot elevate a former guest or let a former owner in as a guest.
-            return binding.owner === owner ? this.userById(binding.userId) : undefined;
+            // A changed owner mapping cannot elevate a former guest or let a former owner in as a guest. A bound guest
+            // who also holds the owner capability comes in with their bound role when they are admitted as a guest too
+            // (`guest`): a capability never upgrades a binding.
+            return binding.owner === owner || (!binding.owner && additionalOwner && guest)
+                ? this.userById(binding.userId)
+                : undefined;
         }
 
         // One bootstrap owner identity per provider (the policy's owner subject). Replacing it requires explicit
@@ -522,10 +528,23 @@ export class ConfigStore {
         this.save();
     }
 
-    /** Remove someone (never the owner), and the invites they made, which could no longer be used. */
+    /**
+     * Whether `id` is an owner admitted by an owner capability (binding `bootstrap: false`), not the bootstrap owner.
+     * Only such an owner can be removed, and only by the bootstrap owner (`PocketApp.removeUser`).
+     */
+    additionalOwner(id: string): boolean {
+        return (this.#config.externalBindings ?? []).some(
+            (each) => each.userId === id && each.owner && each.bootstrap === false,
+        );
+    }
+
+    /**
+     * Remove someone (never the bootstrap owner), and the invites they made, which could no longer be used. Their
+     * external binding stays as a tombstone.
+     */
     removeUser(id: string): void {
         this.#config.users = this.#config.users.filter(
-            (user) => user.id !== id || user.role === "owner",
+            (user) => user.id !== id || (user.role === "owner" && !this.additionalOwner(user.id)),
         );
 
         if (!this.#config.users.some((user) => user.id === id)) {

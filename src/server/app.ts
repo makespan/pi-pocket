@@ -2335,6 +2335,13 @@ export class PocketApp {
                 id: each.id,
                 name: each.name,
                 role: each.role,
+                // An owner the viewer may remove: one admitted by the owner capability, for the bootstrap owner.
+                ...(each.role === "owner" &&
+                viewer.role === "owner" &&
+                this.config.additionalOwner(each.id) &&
+                !this.config.additionalOwner(viewer.id)
+                    ? { removable: true }
+                    : {}),
                 ...(each.avatar === undefined ? {} : { avatar: each.avatar }),
                 online: this.#online(each.id),
                 ...(each.lastSeen === undefined ? {} : { lastSeen: each.lastSeen }),
@@ -3291,13 +3298,23 @@ export class PocketApp {
         this.#peopleChanged();
     }
 
+    /**
+     * An owner removes someone. An owner admitted by the owner capability can be removed too, but only by the
+     * bootstrap owner; the bootstrap owner never. Their binding stays as a tombstone, as a guest's does.
+     */
     removeUser(owner: User, userId: string): void {
         if (owner.role !== "owner") {
             throw new HttpError(403, "Only the owner can do that");
         }
 
         if (this.config.userById(userId)?.role === "owner") {
-            throw new HttpError(400, "The owner cannot be removed");
+            if (!this.config.additionalOwner(userId)) {
+                throw new HttpError(400, "The owner cannot be removed");
+            }
+
+            if (this.config.additionalOwner(owner.id)) {
+                throw new HttpError(403, "Only the first owner can remove an owner");
+            }
         }
 
         this.#forget(userId);

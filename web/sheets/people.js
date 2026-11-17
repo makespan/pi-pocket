@@ -382,10 +382,11 @@ function PeopleList() {
                 </div>
                 ${
                     owner &&
-                    person.role !== "owner" &&
+                    (person.role !== "owner" || person.removable) &&
                     html`<div class="person-actions">
                         ${
                             collab() &&
+                            person.role !== "owner" &&
                             html`<button
                                 class="button small"
                                 title="Change what they can do"
