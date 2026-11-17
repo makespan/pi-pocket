@@ -1,6 +1,6 @@
 /** The launcher's command line: its options, from arguments and the environment, and its help. */
 import { parseBasePath } from "../base-path.ts";
-import { parseSocketPath } from "../socket-path.ts";
+import { parseSocketPath, socketArgument } from "../socket-path.ts";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { ACCESS_MODES, type AccessMode, isAccessMode } from "./access.ts";
@@ -93,7 +93,11 @@ export function parseArgs(argv: string[]): Options {
             options.port = Number(value());
             tcpFlags.push(arg);
         } else if (arg === "--socket") {
-            options.socket = value();
+            try {
+                options.socket = socketArgument(value());
+            } catch (error) {
+                fail((error as Error).message);
+            }
         } else if (arg === "--base-path") {
             options.basePath = value();
         } else if (arg === "--cwd") {
