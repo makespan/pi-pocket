@@ -49,7 +49,7 @@ import {
 } from "./store.js";
 import { useDock } from "./dock.js";
 import { fromServer } from "./seen.js";
-import { defineItem, slotItems } from "./slots.js";
+import { defineItem, extensionNodes, slotItems } from "./slots.js";
 import { SubagentsBar } from "./subagents.js";
 import { TrustBar } from "./trust.js";
 import { prefs } from "./theme.js";
@@ -1570,6 +1570,15 @@ export function Composer() {
         return true;
     };
 
+    /** What a module's button in the message box's row gets: the box as a key gets it (`keyBox`), when it is there. */
+    const buttonBox = () =>
+        box.current === null
+            ? undefined
+            : keyBox(box.current, "session", (value, start, end) => {
+                  edit(value, start);
+                  requestAnimationFrame(() => box.current?.setSelectionRange(start, end));
+              });
+
     const onKey = (event) => {
         // A quote marked by a first Backspace waits only for the second.
         if (event.key !== "Backspace" && !/^(Shift|Control|Alt|Meta)$/.test(event.key)) {
@@ -2431,7 +2440,14 @@ export function Composer() {
                         enterkeyhint=${coarse ? "enter" : "send"}
                     ></textarea>
                     <div class="composer-row" data-part="composer-tools">
-                        ${slotItems("composer", { picker, agent, level, view }).map(({ node }) => node)}
+                        ${slotItems("composer", {
+                            picker,
+                            agent,
+                            level,
+                            view,
+                            text,
+                            box: buttonBox,
+                        }).map(({ node }) => node)}
                         <input
                             ref=${picker}
                             type="file"
@@ -2486,6 +2502,7 @@ export function Composer() {
                             </div>`
                         }
                         ${busy && html`<${ModePick} mode=${sendMode} onPick=${setSendMode} />`}
+                        ${extensionNodes("composer-end", { text, box: buttonBox })}
                         <${MicButton}
                             dictation=${dictation}
                             class="composer-mic"

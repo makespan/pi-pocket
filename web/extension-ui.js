@@ -987,6 +987,8 @@ function pocketFor(record) {
         get pocketVersion() {
             return store.state.server?.pocketVersion;
         },
+        // What Makespan's fork adds to the API, so a module can tell it from Pi Pocket without it.
+        makespan: Object.freeze({ composerBox: true }),
         module: record.module,
         title: record.title,
         // Drawing: the app's own Preact and htm, so components and hooks work with its renderer.
@@ -2349,32 +2351,51 @@ function placeItems() {
     }));
 }
 
-/** The buttons that extensions added to the message box's row, after the app's own on its left. */
-function composerItems() {
-    return added("composerButton").map(({ record, spec }) => ({
-        id: itemId(record, spec),
-        label: spec.title,
-        module: record.title,
-        before: spec.before,
-        after: spec.after,
-        render: () => {
-            const on = opened(record, spec);
-            const badge = badgeFor(spec);
+/**
+ * The buttons that extensions added to the message box's row: after the app's own on its left, or (`side: "end"`)
+ * beside the mic and Send. A `run` gets the session's message box (its text, its selection, and `set`), as a module's
+ * key does; one with `whenText` shows only while the box holds text.
+ */
+function composerItems(side = "start") {
+    return added("composerButton")
+        .filter(({ spec }) => (spec.side === "end" ? "end" : "start") === side)
+        .map(({ record, spec }) => ({
+            id: itemId(record, spec),
+            label: spec.title,
+            module: record.title,
+            before: spec.before,
+            after: spec.after,
+            render: (context = {}) => {
+                if (spec.whenText === true && !(context.text ?? "").trim()) {
+                    return null;
+                }
 
-            return html`<button
-                class=${`icon-button badge-host ext-composer-button ${on ? "on" : ""}`}
-                data-part="composer-button"
-                data-module=${record.module}
-                aria-label=${badge === "" ? spec.title : `${spec.title}, ${badge}`}
-                title=${spec.title}
-                onMouseDown=${(event) => event.preventDefault()}
-                onClick=${() => (on ? closeOf(spec) : activate(record, spec))}
-            >
-                <${Icon} path=${pathOf(spec)} size=${17} />
-                ${badge !== "" && html`<span class="badge">${badge}</span>`}
-            </button>`;
-        },
-    }));
+                const on = opened(record, spec);
+                const badge = badgeFor(spec);
+
+                // Beside the mic and Send, a button has a class of its own: the narrow box's rules for the left
+                // ones (a line of their own, out of the way while Pi works) are not for it.
+                return html`<button
+                    class=${`icon-button badge-host ${side === "end" ? "ext-composer-end" : "ext-composer-button"} ${on ? "on" : ""}`}
+                    data-part="composer-button"
+                    data-module=${record.module}
+                    aria-label=${badge === "" ? spec.title : `${spec.title}, ${badge}`}
+                    title=${spec.title}
+                    onMouseDown=${(event) => event.preventDefault()}
+                    onClick=${() =>
+                        on
+                            ? closeOf(spec)
+                            : activate(
+                                  record,
+                                  spec,
+                                  spec.run === undefined ? undefined : context.box?.(),
+                              )}
+                >
+                    <${Icon} path=${pathOf(spec)} size=${17} />
+                    ${badge !== "" && html`<span class="badge">${badge}</span>`}
+                </button>`;
+            },
+        }));
 }
 
 /**
@@ -2418,7 +2439,8 @@ const sources = {
     status: statusItems,
     topbar: topbarItems,
     places: placeItems,
-    composer: composerItems,
+    composer: () => composerItems("start"),
+    "composer-end": () => composerItems("end"),
     reply: replyItems,
 };
 

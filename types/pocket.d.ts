@@ -2101,11 +2101,37 @@ export type TopbarSpec = Action &
     };
 
 /**
- * A button on the left of the message box's row, after the app's own (Attach, the model, Plan).
+ * A button on the left of the message box's row, after the app's own (Attach, the model, Plan), or beside the mic and
+ * Send (`side: "end"`). In Makespan's fork, its `run` gets the session's message box, as a module's key does.
  * @since 0.19.0
  * @experimental
  */
-export type ComposerButtonSpec = TopbarSpec;
+export type ComposerButtonSpec = (
+    | Exclude<Action, { run: () => unknown }>
+    | {
+          /**
+           * Runs on a tap. In Makespan's fork it gets the session's message box (its text, its selection, and `set`);
+           * undefined before the box is there, and in Pi Pocket without the fork (`pocket.makespan`).
+           */
+          run: (box?: ComposerBox) => unknown;
+          page?: never;
+          sheet?: never;
+          panel?: never;
+      }
+) &
+    Omit<TopbarSpec, keyof Action> & {
+        /**
+         * Makespan's fork: `"end"` puts the button beside the mic and Send, where it cannot be moved in Appearance;
+         * `"start"` (the default), on the left with the app's own.
+         * @experimental
+         */
+        side?: "start" | "end";
+        /**
+         * Makespan's fork: the button shows only while the message box holds text.
+         * @experimental
+         */
+        whenText?: boolean;
+    };
 
 /**
  * One of Pi's answers, as an action under it gets it.
@@ -2786,6 +2812,13 @@ export interface Pocket {
      * @since 0.16.0
      */
     readonly pocketVersion: string | undefined;
+    /**
+     * What Makespan's fork of Pi Pocket adds to the API; undefined in Pi Pocket without it. `composerBox`: a message
+     * box button's `run` gets the box, and `side` and `whenText` work.
+     * @since 0.29.0
+     * @experimental
+     */
+    readonly makespan?: { readonly composerBox: boolean };
     /**
      * The module's name.
      * @since 0.14.0

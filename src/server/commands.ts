@@ -2590,7 +2590,7 @@ export class Commands {
         if (request.entryId === undefined) {
             return {
                 id: await this.#branch(id, user, {
-                    at: await this.#latestReply(id),
+                    at: await this.#currentPoint(id),
                     label: "fork",
                     worktree: request.worktree === true,
                 }),
@@ -2742,23 +2742,60 @@ export class Commands {
         return { id: forked };
     }
 
-    /** A reply that called tools is not finished: a fork from it would wait for their results. */
-    async #latestReply(id: ConversationId): Promise<number | undefined> {
+    /**
+     * Where a fork of the whole session starts: where Pi is now (Makespan's fork, as Pi's CLI forks). Idle, that is its
+     * latest reply. While it works, it is the newest point where no tool call waits for its result: the last result
+     * of a finished round of tool calls, so the fork knows what Pi did so far and goes on from there (a message sent to
+     * it comes after those results, as a message that steers a run does). A round whose tools still run, and a message
+     * that came after the last finished point, are not in it. Undefined before any reply.
+     */
+    async #currentPoint(id: ConversationId): Promise<number | undefined> {
         const conversation = await this.#app.conversation(id);
         let cursor: Cursor | undefined;
+        /** The newest tool result of the round seen so far (walking back), and how many results that round has. */
+        let newestResult: number | undefined;
+        let results = 0;
 
         do {
             const page = await conversation.entries({}, 64, cursor, context);
 
             for (const entry of page.items) {
+                if (entry.kind === "pi.tool-result") {
+                    newestResult ??= Number(entry.id);
+                    results++;
+                    continue;
+                }
+
+                if (entry.kind !== "pi.assistant") {
+                    // Anything else (a message, a compaction) between a round's results and the newest point: the
+                    // round's results before it are still a whole round; the walk goes on.
+                    if (entry.kind === "pi.user") {
+                        newestResult = undefined;
+                        results = 0;
+                    }
+
+                    continue;
+                }
+
                 const reply = entry.model?.[0];
 
-                if (
-                    entry.kind === "pi.assistant" &&
-                    !(reply?.role === "assistant" && reply.stopReason === "toolUse")
-                ) {
-                    return Number(entry.id);
+                if (reply?.role === "assistant" && reply.stopReason === "toolUse") {
+                    const calls = Array.isArray(reply.content)
+                        ? reply.content.filter((part) => part.type === "toolCall").length
+                        : 0;
+
+                    // Every call of this round has its result: the fork goes on from the last one.
+                    if (newestResult !== undefined && results >= calls) {
+                        return newestResult;
+                    }
+
+                    // Its tools still run: the point is before this round.
+                    newestResult = undefined;
+                    results = 0;
+                    continue;
                 }
+
+                return Number(entry.id);
             }
 
             cursor = page.next;

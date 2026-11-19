@@ -39,6 +39,7 @@ const POCKET_MEMBERS: Record<keyof Pocket, true> = {
     onSettings: true,
     version: true,
     pocketVersion: true,
+    makespan: true,
     module: true,
     title: true,
     h: true,
