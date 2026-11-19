@@ -24,8 +24,10 @@ import { SessionsDoc } from "../src/server/docs.ts";
 
 /** What each model request saw: the model, the system prompt's sections, and the newest message. */
 const requests: { model: string; sections: Record<string, string>; text: string }[] = [];
+/** While set, the model's answer after a tool's result waits for it: a test can act while Pi still works. */
+let afterTool: Promise<void> | undefined;
 
-const route: FauxResponseStep = (request, _options, _state, model) => {
+const route: FauxResponseStep = async (request, _options, _state, model) => {
     const { role, text } = lastText(request as never);
     // Pi Durable sends the system prompt as positional system messages with sections by name: each one changes the
     // sections it names, and null removes one.
@@ -48,6 +50,10 @@ const route: FauxResponseStep = (request, _options, _state, model) => {
     }
 
     requests.push({ model: model.id, sections, text });
+
+    if (role === "toolResult" && afterTool !== undefined) {
+        await afterTool;
+    }
 
     if (role === "user" && text.endsWith("list the files")) {
         return fauxAssistantMessage([fauxToolCall("bash", { command: "ls" })], {
@@ -150,6 +156,45 @@ test("a fork with no message chosen takes the whole session, through Pi's latest
     assert.match(await texts(fork), /first question/);
     assert.match(await texts(fork), /second question/);
     assert.match(app.sessionMeta(fork)?.title ?? "", /· fork$/);
+});
+
+test("a fork made while Pi works goes on from where it is: after its last finished tool call", async () => {
+    const id = await newSession(app);
+
+    await say(app, id, "first question");
+
+    let release = () => {};
+
+    afterTool = new Promise((resolve) => (release = resolve));
+
+    const { submissionId } = await app.commands.submit(id, owner(app), {
+        text: "now list the files",
+        requestId: crypto.randomUUID(),
+    });
+
+    // The tool ran, and Pi waits for the model's next answer.
+    await until(async () => (await ofKind(id, "pi.tool-result")).length > 0, "the tool's result");
+
+    const { id: fork } = await app.commands.fork(id, owner(app), {});
+    const kinds = (await entries(fork)).map((entry) => entry.kind);
+
+    release();
+    afterTool = undefined;
+    await (await app.harness.submission(submissionId, context))!.wait(context);
+
+    assert.equal(kinds.at(-1), "pi.tool-result", "the fork ends with the tool's result");
+    assert.match(await texts(fork), /now list the files/);
+    assert.equal(
+        (await ofKind(fork, "pi.assistant")).filter((entry) =>
+            JSON.stringify(entry.model).includes("echo: "),
+        ).length,
+        1,
+        "only the answer to the first question, not the one that came after the fork",
+    );
+
+    // A message to the fork goes on after the result, as a message that steers a run does.
+    await say(app, fork, "where are you?");
+    assert.match(await texts(fork), /echo: where are you\?/);
 });
 
 test("a message can be edited and sent again in a fork that ends just before it", async () => {

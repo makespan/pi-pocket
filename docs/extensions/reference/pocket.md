@@ -48,6 +48,16 @@ Since 0.16.0 · Stable
 
 The connected server's package version, from its server metadata. It can be `undefined` when a new browser connects to a server older than 0.16.0. It is not `pocket.version`, which remains the extension API level. This read-only value does not check for updates.
 
+### `makespan`
+
+```ts
+readonly makespan?: { readonly composerBox: boolean };
+```
+
+Since 0.29.0 · Experimental
+
+What Makespan's fork of Pi Pocket adds to the API; `undefined` in Pi Pocket without it. With `composerBox`, a message box button's `run` gets the session's message box (as a key's does), and `side` and `whenText` work: see [`ComposerButtonSpec`](#composerbuttonspec).
+
 ### `module`
 
 ```ts
@@ -501,7 +511,7 @@ composerButton(spec: ComposerButtonSpec): Added<ComposerButtonSpec>;
 
 Since 0.19.0 · Experimental
 
-Adds a button on the left of the message box's row, after the app's own (Attach, the model, Plan). Send, Stop, the mic, and Steer, Queue and Interrupt stay on the right. In a narrow message box (a phone's), where they would push Send or Stop out of it, these buttons take a line of their own under the row: two or more up to 480 px wide, one up to 340 px. A single button in a box from 341 to 480 px wide stays in the row, and steps aside while Pi works, as the model chip does, so Stop stays in the row; it comes back when Pi stops. See [`ComposerButtonSpec`](#composerbuttonspec).
+Adds a button on the left of the message box's row, after the app's own (Attach, the model, Plan); in Makespan's fork, with `side: "end"`, beside the mic and Send instead. Send, Stop, the mic, and Steer, Queue and Interrupt stay on the right. In a narrow message box (a phone's), where they would push Send or Stop out of it, these buttons take a line of their own under the row: two or more up to 480 px wide, one up to 340 px. A single button in a box from 341 to 480 px wide stays in the row, and steps aside while Pi works, as the model chip does, so Stop stays in the row; it comes back when Pi stops. See [`ComposerButtonSpec`](#composerbuttonspec).
 
 ### `replyAction`
 
@@ -958,12 +968,19 @@ A button in the top bar. `title`, `icon`, `iconPath`, and `badge` are as for a r
 ### `ComposerButtonSpec`
 
 ```ts
-type ComposerButtonSpec = TopbarSpec;
+type ComposerButtonSpec = (
+    | Exclude<Action, { run: () => unknown }>
+    | { run: (box?: ComposerBox) => unknown; page?: never; sheet?: never; panel?: never }
+) &
+    Omit<TopbarSpec, keyof Action> & {
+        side?: "start" | "end";
+        whenText?: boolean;
+    };
 ```
 
 Since 0.19.0 · Experimental
 
-A button in the message box's row, with the same fields as a top bar button.
+A button in the message box's row, with the same fields as a top bar button. In Makespan's fork (`pocket.makespan?.composerBox`), `run` gets the session's message box as a key's `run` does ([`ComposerBox`](#composerbox): `text`, `start`, `end`, and `set`, which writes through the box's own editing, so its draft is kept), `side: "end"` puts the button beside the mic and Send (not movable in Appearance, and not moved to a line of its own in a narrow box), and `whenText: true` shows it only while the box holds text. In Pi Pocket without the fork, `run` gets nothing and both fields are ignored.
 
 ### `Reply`
 

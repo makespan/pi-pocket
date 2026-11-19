@@ -36,6 +36,17 @@ export function defineItem(slot, item) {
     version++;
 }
 
+/**
+ * Extensions' items of a place that is no slot a person arranges (`"composer-end"`: the message box's buttons beside
+ * the mic and Send), drawn with `context`, in the server's order of modules.
+ */
+export function extensionNodes(place, context = {}) {
+    return extensionItems(place)
+        .map((item) => ({ id: item.id, node: item.render(context) }))
+        .filter(({ node }) => node !== null && node !== undefined && node !== false)
+        .map(({ id, node }) => h(Fragment, { key: id }, node));
+}
+
 /** Where extensions' items and arrangements come from: `extension-ui.js`, which imports this module. */
 export function fromExtensions(items, arrangements) {
     extensionItems = items;

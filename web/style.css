@@ -4353,6 +4353,18 @@ pre.diff .del {
     }
 }
 
+/* Makespan's fork: extensions' buttons beside the mic and Send (`side: "end"`), which show only while they have a use
+ * (`whenText`). They take the mic's size and keep Send in the row: the model chip gives way first. */
+.composer-row .ext-composer-end {
+    flex: none;
+}
+
+@container composer (max-width: 480px) {
+    .composer-row:has(.ext-composer-end) .model-chip .model-level {
+        display: none;
+    }
+}
+
 /* One button, on its line in the row: while Pi works it steps aside on a narrow box, so Steer, Queue, Interrupt, and
  * Stop stay inside it. It shows again after. */
 @container composer (340px < width <= 480px) {
